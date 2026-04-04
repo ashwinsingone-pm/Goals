@@ -59,30 +59,36 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "No active membership" }, { status: 403 });
   }
 
-  const data = await db.oPSPData.upsert({
-    where: {
-      tenantId_userId_year_quarter: {
-        tenantId: membership.tenantId,
-        userId:   session.user.id,
-        year:     parseInt(year),
-        quarter,
+  try {
+    const data = await db.oPSPData.upsert({
+      where: {
+        tenantId_userId_year_quarter: {
+          tenantId: membership.tenantId,
+          userId:   session.user.id,
+          year:     parseInt(year),
+          quarter,
+        },
       },
-    },
-    update: {
-      ...fields,
-      updatedBy: session.user.id,
-    },
-    create: {
-      tenantId:  membership.tenantId,
-      userId:    session.user.id,
-      year:      parseInt(year),
-      quarter,
-      createdBy: session.user.id,
-      ...fields,
-    },
-  });
+      update: {
+        ...fields,
+        updatedBy: session.user.id,
+      },
+      create: {
+        tenantId:  membership.tenantId,
+        userId:    session.user.id,
+        year:      parseInt(year),
+        quarter,
+        createdBy: session.user.id,
+        ...fields,
+      },
+    });
 
-  return NextResponse.json({ data, savedAt: new Date().toISOString() });
+    return NextResponse.json({ data, savedAt: new Date().toISOString() });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[PUT /api/opsp]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 /* ── POST: finalize ── */
