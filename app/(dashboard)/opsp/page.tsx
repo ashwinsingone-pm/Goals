@@ -159,9 +159,9 @@ function RichEditor({
   };
 
   return (
-    <div className="flex flex-col">
+    <div className={cn("flex flex-col min-h-0", className)}>
       <RichToolbar editorRef={editorRef} />
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-[80px]">
         {isEmpty && (
           <span className="absolute inset-0 px-3 py-2 text-sm text-gray-400 pointer-events-none select-none">
             {placeholder}
@@ -172,10 +172,8 @@ function RichEditor({
           contentEditable
           suppressContentEditableWarning
           onInput={handleInput}
-          className={cn(
-            "w-full border border-gray-200 rounded px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 min-h-[80px] bg-white",
-            className
-          )}
+          style={{ minHeight: "inherit" }}
+          className="w-full h-full border border-gray-200 rounded px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white overflow-y-auto"
         />
       </div>
     </div>
@@ -636,8 +634,8 @@ export default function OPSPPage() {
             {/* Core Values */}
             <Card className="flex flex-col gap-3">
               <CardH title="CORE VALUES/BELIEFS" subtitle="(Should/Shouldn't)" />
-              <div className="flex-1 flex flex-col">
-                <RichEditor value={form.coreValues} onChange={v => set("coreValues", v)} placeholder="Enter core values..." className="flex-1" resetKey={`${form.year}-${form.quarter}`} />
+              <div className="flex-1 flex flex-col min-h-0">
+                <RichEditor value={form.coreValues} onChange={v => set("coreValues", v)} placeholder="Enter core values..." className="flex-1 min-h-0" resetKey={`${form.year}-${form.quarter}`} />
               </div>
             </Card>
 
