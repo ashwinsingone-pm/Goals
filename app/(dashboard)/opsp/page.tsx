@@ -634,9 +634,11 @@ export default function OPSPPage() {
           <div className="grid grid-cols-4 gap-4">
 
             {/* Core Values */}
-            <Card className="flex flex-col">
+            <Card className="flex flex-col gap-3">
               <CardH title="CORE VALUES/BELIEFS" subtitle="(Should/Shouldn't)" />
-              <RichEditor value={form.coreValues} onChange={v => set("coreValues", v)} placeholder="Enter core values..." className="flex-1" resetKey={`${form.year}-${form.quarter}`} />
+              <div className="flex-1 flex flex-col">
+                <RichEditor value={form.coreValues} onChange={v => set("coreValues", v)} placeholder="Enter core values..." className="flex-1" resetKey={`${form.year}-${form.quarter}`} />
+              </div>
             </Card>
 
             {/* Purpose */}
