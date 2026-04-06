@@ -638,7 +638,7 @@ function WWWSection({ items }: { items: WWWItem[] }) {
 
 export default function DashboardPage() {
   const [year, setYear] = useState(CURRENT_YEAR);
-  const [quarter, setQuarter] = useState<string>(getFiscalQuarter());
+  const [quarter, setQuarter] = useState<"Q1" | "Q2" | "Q3" | "Q4">(getFiscalQuarter() as "Q1" | "Q2" | "Q3" | "Q4");
   const [filterOwner, setFilterOwner] = useState("");
 
   const { data: users = [] } = useUsers();
@@ -671,7 +671,7 @@ export default function DashboardPage() {
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={selectCls}>
             {FISCAL_YEARS.map(y => <option key={y} value={y}>{fiscalYearLabel(y)}</option>)}
           </select>
-          <select value={quarter} onChange={e => setQuarter(e.target.value)} className={selectCls}>
+          <select value={quarter} onChange={e => setQuarter(e.target.value as "Q1" | "Q2" | "Q3" | "Q4")} className={selectCls}>
             {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
           </select>
         </div>
