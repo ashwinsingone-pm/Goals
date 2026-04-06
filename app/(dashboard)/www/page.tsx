@@ -1,16 +1,220 @@
 "use client";
 
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useWWWItems, useDeleteWWW } from "@/lib/hooks/useWWW";
+import { useUsers } from "@/lib/hooks/useUsers";
+import { WWWTable } from "./components/WWWTable";
+import { WWWPanel } from "./components/WWWPanel";
+
 export default function WWWPage() {
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterWho, setFilterWho] = useState("");
+  const [showFilter, setShowFilter] = useState(false);
+  const { data: users = [] } = useUsers();
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectionChange = useCallback((ids: Set<string>) => setSelectedIds(new Set(ids)), []);
+
+  // Pass status filter to API; handle search client-side in API too
+  const { data: items = [], isLoading, error, refetch } = useWWWItems({
+    status: filterStatus || undefined,
+  });
+
+  const deleteWWW = useDeleteWWW();
+
+  // Close filter dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setShowFilter(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  async function handleBulkDelete() {
+    if (!selectedIds.size) return;
+    await Promise.all([...selectedIds].map(id => deleteWWW.mutateAsync(id)));
+    setSelectedIds(new Set());
+    refetch();
+  }
+
+  // Client-side filters
+  const filtered = items.filter(item => {
+    if (filterWho && item.who !== filterWho) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      item.what.toLowerCase().includes(q) ||
+      (item.notes ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  const activeFilterCount = (filterStatus ? 1 : 0) + (filterWho ? 1 : 0);
+
   return (
-    <div className="p-8">
-      <h1 className="text-4xl font-bold font-display mb-2">WWW Module</h1>
-      <p className="text-text-secondary mb-8">
-        Weekly commitments (Who, What, When)
-      </p>
-      <div className="bg-white border border-border rounded-lg p-12 text-center">
-        <div className="text-6xl mb-4">✅</div>
-        <h2 className="text-2xl font-bold mb-4">Coming in Phase 4</h2>
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-base font-semibold text-gray-800 whitespace-nowrap">WWW</h1>
+          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+            {filtered.length} {filtered.length === 1 ? "item" : "items"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Bulk delete */}
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              disabled={deleteWWW.isPending}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-red-50 border border-red-200 text-red-600 rounded-md hover:bg-red-100 disabled:opacity-50 transition-colors"
+            >
+              {deleteWWW.isPending ? (
+                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              )}
+              Delete {selectedIds.size} selected
+            </button>
+          )}
+
+          {/* Search */}
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400 w-44"
+            />
+          </div>
+
+          {/* Filter */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilter(o => !o)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs border rounded-md hover:bg-gray-50 transition-colors ${showFilter || activeFilterCount > 0 ? "border-blue-300 bg-blue-50 text-blue-600" : "border-gray-200 text-gray-600"}`}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+              </svg>
+              {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}` : "Filter"}
+            </button>
+
+            {showFilter && (
+              <div className="absolute top-full right-0 mt-1.5 w-56 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Who</p>
+                  <select
+                    value={filterWho}
+                    onChange={e => setFilterWho(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                  >
+                    <option value="">All people</option>
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Status</p>
+                  <select
+                    value={filterStatus}
+                    onChange={e => setFilterStatus(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="not-applicable">Not Applicable</option>
+                    <option value="not-yet-started">Not Yet Started</option>
+                    <option value="behind-schedule">Behind Schedule</option>
+                    <option value="on-track">On Track</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+                {(filterStatus || filterWho) && (
+                  <button
+                    onClick={() => { setFilterStatus(""); setFilterWho(""); }}
+                    className="w-full text-xs text-gray-500 hover:text-gray-800 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Add New */}
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-md hover:bg-gray-700 transition-colors"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add New
+          </button>
+        </div>
       </div>
+
+      {/* Table Area */}
+      <div className="flex-1 overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-full">
+            <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center h-full text-sm text-red-500">
+            Failed to load WWW items
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
+            <svg className="h-10 w-10 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <p className="text-sm">No WWW items yet</p>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-md hover:bg-gray-700 transition-colors"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add First Item
+            </button>
+          </div>
+        ) : (
+          <WWWTable
+            items={filtered}
+            onRefresh={refetch}
+            onSelectionChange={handleSelectionChange}
+          />
+        )}
+      </div>
+
+      {/* Add New Panel */}
+      {showAddModal && (
+        <WWWPanel
+          mode="create"
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => { setShowAddModal(false); refetch(); }}
+        />
+      )}
     </div>
   );
 }

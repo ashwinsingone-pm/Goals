@@ -395,6 +395,7 @@ model WWWItem {
 
   status              String   @default("not-started")
   notes               String?  @db.Text
+  category            String?
 
   originalDueDate     DateTime?
   revisedDates        String[]
