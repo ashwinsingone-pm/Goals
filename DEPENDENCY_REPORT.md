@@ -2,12 +2,21 @@
 
 ## Summary
 
-No dependencies configured yet.
+| Category | Count |
+|----------|-------|
+| Runtime dependencies | 0 |
+| Dev dependencies | 1 |
 
-## Details
+## Dev Dependencies
 
-Dependencies will be tracked as the project adds package management.
+| Package | Version | Purpose |
+|---------|---------|---------|
+| pytest | >=9.0 | Test runner |
+
+## Notes
+
+Application uses only Python standard library. No runtime dependencies required.
 
 ---
 
-*Last checked: 2026-04-04*
+*Last checked: 2026-04-04 (Run 2)*

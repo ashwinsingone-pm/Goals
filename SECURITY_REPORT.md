@@ -4,14 +4,17 @@
 
 | Category | Status |
 |----------|--------|
-| Dependencies | No dependencies yet |
+| Dependencies | No external dependencies |
 | Secrets | No secrets detected |
 | Vulnerabilities | None |
+| Input Validation | Goal title and progress validated |
 
 ## Details
 
-Initial scan on empty repository. No security concerns found.
+- No external dependencies - minimal attack surface
+- File storage uses standard library JSON - no deserialization risks
+- User input validated at model level (empty titles, progress bounds)
 
 ---
 
-*Last scan: 2026-04-04*
+*Last scan: 2026-04-04 (Run 2)*
