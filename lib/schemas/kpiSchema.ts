@@ -14,6 +14,10 @@ export const createKPISchema = z.object({
   quarterlyGoal: z.number().positive().optional().nullable(),
   qtdGoal: z.number().positive().optional().nullable(),
   status: z.enum(["active", "paused", "completed"]).default("active"),
+  divisionType: z.enum(["Cumulative", "Standalone"]).default("Cumulative"),
+  weeklyTargets: z.record(z.string(), z.number()).optional().nullable(),
+  currency: z.string().optional().nullable(),
+  targetScale: z.string().optional().nullable(),
 });
 
 export const updateKPISchema = createKPISchema.partial().required({ name: true });

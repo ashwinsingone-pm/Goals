@@ -387,7 +387,7 @@ export const SignInComponent = ({ logo, brandName = "QuikScale" }: SignInCompone
               ))}
             </div>
             <div>
-              <p className="text-white/80 text-sm font-medium">"Increased team alignment by 40%"</p>
+              <p className="text-white/80 text-sm font-medium">&ldquo;Increased team alignment by 40%&rdquo;</p>
               <p className="text-white/35 text-xs mt-0.5">Joined by 500+ growth-stage companies</p>
             </div>
           </div>

@@ -1,121 +1,319 @@
 "use client";
 
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { useKPIs, useCreateKPI, useDeleteKPI } from "@/lib/hooks/useKPI";
-import { KPIDataTable } from "./components/KPIDataTable";
-import { KPICreateForm } from "./components/KPICreateForm";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useSession } from "next-auth/react";
+import { useKPIs, useDeleteKPI } from "@/lib/hooks/useKPI";
+import { useUsers } from "@/lib/hooks/useUsers";
 import { KPIListParams } from "@/lib/schemas/kpiSchema";
+import {
+  getFiscalYear, getFiscalQuarter, fiscalYearLabel,
+  getCurrentFiscalWeek, getWeekDateRange,
+} from "@/lib/utils/fiscal";
+import { KPITable, HiddenColsMenu } from "./components/KPITable";
+import { KPIModal } from "./components/KPIModal";
+import { ALL_STATIC_COLS, COL_LABELS } from "./hooks/useTableColumns";
+import { ALL_WEEKS } from "@/lib/utils/fiscal";
 
-export const dynamic = "force-dynamic";
+const FISCAL_YEAR = getFiscalYear();
+const FISCAL_QUARTER = getFiscalQuarter();
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-      delayChildren: 0.2,
-    },
-  },
-};
+export default function IndividualKPIPage() {
+  const { data: session } = useSession();
+  const [showAddModal, setShowAddModal] = useState(false);
 
-const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.4, ease: "easeOut" },
-  },
-};
-
-export default function KPIPage() {
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  // Filters
   const [filters, setFilters] = useState<Partial<KPIListParams>>({
     page: 1,
-    pageSize: 20,
+    pageSize: 50,
+    year: FISCAL_YEAR,
+    quarter: FISCAL_QUARTER,
     sortBy: "createdAt",
     sortOrder: "desc",
   });
 
-  const { data, isLoading, error } = useKPIs(filters);
-  const createKPI = useCreateKPI();
-  const deleteKPI = useDeleteKPI();
+  // Filter panel state
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterOwner, setFilterOwner] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const filterRef = useRef<HTMLDivElement>(null);
+  const ownerInitialized = useRef(false);
 
-  const handleCreateSuccess = () => {
-    setShowCreateForm(false);
-  };
+  // Users for owner dropdown
+  const { data: users = [] } = useUsers();
 
-  const handleDeleteKPI = (id: string) => {
-    if (confirm("Are you sure you want to delete this KPI?")) {
-      deleteKPI.mutate(id);
+  // Year picker
+  const [showYearPicker, setShowYearPicker] = useState(false);
+  const [availableYears, setAvailableYears] = useState<number[]>([FISCAL_YEAR]);
+  const yearRef = useRef<HTMLDivElement>(null);
+
+  // Set default owner filter to current user once session loads
+  useEffect(() => {
+    if (session?.user?.id && !ownerInitialized.current) {
+      setFilterOwner(session.user.id);
+      ownerInitialized.current = true;
     }
-  };
+  }, [session?.user?.id]);
 
-  const handleFilterChange = (newFilters: Partial<KPIListParams>) => {
-    setFilters({ ...filters, ...newFilters, page: 1 });
-  };
+  // Apply filter changes
+  useEffect(() => {
+    setFilters(f => ({
+      ...f,
+      status: (filterStatus as any) || undefined,
+      owner: filterOwner || undefined,
+      page: 1,
+    }));
+  }, [filterStatus, filterOwner]);
 
-  const handlePageChange = (page: number) => {
-    setFilters({ ...filters, page });
-  };
+  // Fetch available years
+  useEffect(() => {
+    fetch("/api/kpi/years")
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.data.length) {
+          const merged = Array.from(new Set([...d.data, FISCAL_YEAR])).sort((a: number, b: number) => b - a);
+          setAvailableYears(merged);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setShowFilter(false);
+      if (yearRef.current && !yearRef.current.contains(e.target as Node)) setShowYearPicker(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const { data, isLoading, error, refetch } = useKPIs(filters);
+  const kpis = data?.data ?? [];
+  const total = data?.total ?? 0;
+
+  // Bulk delete
+  const deleteKPI = useDeleteKPI();
+  const [selectedKPIIds, setSelectedKPIIds] = useState<Set<string>>(new Set());
+  const [clearSelectionTrigger, setClearSelectionTrigger] = useState(0);
+
+  const handleSelectionChange = useCallback((ids: Set<string>) => setSelectedKPIIds(new Set(ids)), []);
+
+  async function handleBulkDelete() {
+    if (!selectedKPIIds.size) return;
+    await Promise.all([...selectedKPIIds].map(id => deleteKPI.mutateAsync(id)));
+    setClearSelectionTrigger(n => n + 1);
+    refetch();
+  }
+
+  // Hidden columns
+  const allTableCols = [...ALL_STATIC_COLS, ...ALL_WEEKS.map(w => `week${w}`)];
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [showColTrigger, setShowColTrigger] = useState<{ col: string; seq: number } | undefined>();
+
+  const handleHiddenColsChange = useCallback((cols: Set<string>) => setHiddenCols(new Set(cols)), []);
+  function handleShowCol(col: string) { setShowColTrigger(t => ({ col, seq: (t?.seq ?? 0) + 1 })); }
+
+  const currentYear = filters.year ?? FISCAL_YEAR;
+  const currentQuarter = filters.quarter ?? FISCAL_QUARTER;
+  const fiscalWeek = getCurrentFiscalWeek(currentYear, currentQuarter);
+  const activeFilterCount = (filterStatus ? 1 : 0) + (filterOwner ? 1 : 0);
 
   return (
-    <motion.div
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-      className="p-8 space-y-8"
-    >
-      {/* Header */}
-      <motion.div variants={itemVariants} className="space-y-2">
-        <h1 className="text-4xl font-bold font-display text-primary">KPI Tracking</h1>
-        <p className="text-text-secondary">
-          Manage and track key performance indicators across your organization
-        </p>
-      </motion.div>
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-base font-semibold text-gray-800 whitespace-nowrap">Individual KPI</h1>
+          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+            {total} items
+          </span>
+          <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+            {currentQuarter} · Week {fiscalWeek} · {getWeekDateRange(currentYear, currentQuarter, fiscalWeek)}
+          </span>
+        </div>
 
-      {/* Actions */}
-      <motion.div variants={itemVariants} className="flex gap-4">
-        <button
-          onClick={() => setShowCreateForm(true)}
-          className="px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors"
-        >
-          Create KPI
-        </button>
-      </motion.div>
+        <div className="flex items-center gap-2">
+          {/* Bulk delete */}
+          {selectedKPIIds.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              disabled={deleteKPI.isPending}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-red-50 border border-red-200 text-red-600 rounded-md hover:bg-red-100 disabled:opacity-50 transition-colors"
+            >
+              {deleteKPI.isPending ? (
+                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              )}
+              Delete {selectedKPIIds.size} selected
+            </button>
+          )}
 
-      {/* Create Form Modal */}
-      {showCreateForm && (
-        <KPICreateForm
-          onSuccess={handleCreateSuccess}
-          onCancel={() => setShowCreateForm(false)}
-        />
-      )}
+          {/* Hidden columns */}
+          {hiddenCols.size > 0 && (
+            <HiddenColsMenu hiddenCols={hiddenCols} allCols={allTableCols} onShow={handleShowCol} />
+          )}
 
-      {/* Content */}
-      <motion.div variants={itemVariants}>
+          {/* Search */}
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search..."
+              onChange={(e) => setFilters(f => ({ ...f, search: e.target.value || undefined, page: 1 }))}
+              className="pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400 w-44"
+            />
+          </div>
+
+          {/* Filter button */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilter(o => !o)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs border rounded-md hover:bg-gray-50 transition-colors ${showFilter || activeFilterCount > 0 ? "border-blue-300 bg-blue-50 text-blue-600" : "border-gray-200 text-gray-600"}`}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+              </svg>
+              {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}` : "Filter"}
+            </button>
+
+            {showFilter && (
+              <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Owner</p>
+                  <select
+                    value={filterOwner}
+                    onChange={e => setFilterOwner(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                  >
+                    <option value="">All owners</option>
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Status</p>
+                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+                    <option value="">All statuses</option>
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+                {(filterStatus || filterOwner) && (
+                  <button
+                    onClick={() => { setFilterStatus(""); setFilterOwner(""); }}
+                    className="w-full text-xs text-gray-500 hover:text-gray-800 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Year / Quarter picker */}
+          <div className="relative" ref={yearRef}>
+            <button
+              onClick={() => setShowYearPicker(o => !o)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-md hover:bg-gray-50 transition-colors ${showYearPicker ? "border-blue-300 bg-blue-50 text-blue-600" : "border-gray-200 text-gray-600"}`}
+            >
+              <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              {fiscalYearLabel(currentYear)} · {currentQuarter}
+              <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showYearPicker && (
+              <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Fiscal Year</p>
+                  <div className="grid grid-cols-1 gap-1">
+                    {availableYears.map(y => (
+                      <button key={y}
+                        onClick={() => { setFilters(f => ({ ...f, year: y, page: 1 })); }}
+                        className={`text-xs px-3 py-1.5 rounded-lg text-left transition-colors ${currentYear === y ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-700"}`}>
+                        {fiscalYearLabel(y)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Quarter</p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(["Q1", "Q2", "Q3", "Q4"] as const).map(q => (
+                      <button key={q}
+                        onClick={() => { setFilters(f => ({ ...f, quarter: q, page: 1 })); setShowYearPicker(false); }}
+                        className={`text-xs px-2 py-1.5 rounded-lg transition-colors ${currentQuarter === q ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-700 border border-gray-200"}`}>
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Add New */}
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-md hover:bg-gray-700 transition-colors"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add New
+          </button>
+        </div>
+      </div>
+
+      {/* Table Area */}
+      <div className="flex-1 overflow-hidden">
         {isLoading ? (
-          <div className="bg-white border border-border rounded-lg p-8 text-center">
-            <p className="text-text-secondary">Loading KPIs...</p>
-          </div>
+          <div className="flex items-center justify-center h-full text-sm text-gray-400">Loading KPIs…</div>
         ) : error ? (
-          <div className="bg-white border border-danger rounded-lg p-8 text-center">
-            <p className="text-danger">Failed to load KPIs</p>
-          </div>
+          <div className="flex items-center justify-center h-full text-sm text-red-500">Failed to load KPIs</div>
         ) : (
-          <KPIDataTable
-            data={data?.data || []}
-            total={data?.total || 0}
-            page={filters.page || 1}
-            pageSize={filters.pageSize || 20}
-            onPageChange={handlePageChange}
-            onFilterChange={handleFilterChange}
-            onDeleteKPI={handleDeleteKPI}
-            filters={filters}
+          <KPITable
+            kpis={kpis}
+            total={total}
+            page={filters.page ?? 1}
+            pageSize={filters.pageSize ?? 50}
+            year={currentYear}
+            quarter={currentQuarter}
+            onPageChange={(p) => setFilters(f => ({ ...f, page: p }))}
+            onSort={(col, dir) => setFilters(f => ({ ...f, sortBy: col as any, sortOrder: dir, page: 1 }))}
+            onRefresh={refetch}
+            onSelectionChange={handleSelectionChange}
+            clearSelectionTrigger={clearSelectionTrigger}
+            onHiddenColsChange={handleHiddenColsChange}
+            showColTrigger={showColTrigger}
           />
         )}
-      </motion.div>
-    </motion.div>
+      </div>
+
+      {/* Add New Modal */}
+      {showAddModal && (
+        <KPIModal
+          mode="create"
+          defaultYear={currentYear}
+          defaultQuarter={currentQuarter}
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => { setShowAddModal(false); refetch(); }}
+        />
+      )}
+    </div>
   );
 }

@@ -227,9 +227,16 @@ model KPI {
   status              String   @default("active")
   healthStatus        String   @default("on-track")
 
+  divisionType        String   @default("Cumulative")
+  weeklyTargets       Json?
+  currency            String?
+  targetScale         String?
+
   lastNotes           String?
   lastNotesAt         DateTime?
   lastNotedBy         String?
+
+  deletedAt           DateTime?
 
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

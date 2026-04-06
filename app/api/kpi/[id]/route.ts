@@ -5,139 +5,59 @@ import { authOptions } from "@/lib/auth";
 import { updateKPISchema } from "@/lib/schemas/kpiSchema";
 import { ApiResponse } from "@/lib/services/kpiService";
 
-// GET /api/kpi/[id] - Get single KPI
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+async function getTenantId(userId: string): Promise<string | null> {
+  const m = await db.membership.findFirst({ where: { userId, status: "active" }, orderBy: { createdAt: "asc" } });
+  return m?.tenantId ?? null;
+}
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+    if (!session?.user?.id) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    const tenantId = request.headers.get("x-tenant-id");
-    if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
-    }
+    const tenantId = await getTenantId(session.user.id);
+    if (!tenantId) return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
 
     const kpi = await db.kPI.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, deletedAt: null },
       select: {
-        id: true,
-        tenantId: true,
-        name: true,
-        description: true,
-        owner: true,
-        teamId: true,
-        parentKPIId: true,
-        quarter: true,
-        year: true,
-        measurementUnit: true,
-        target: true,
-        quarterlyGoal: true,
-        qtdGoal: true,
-        qtdAchieved: true,
-        currentWeekValue: true,
-        progressPercent: true,
-        status: true,
-        healthStatus: true,
-        createdAt: true,
-        updatedAt: true,
-        createdBy: true,
-        updatedBy: true,
+        id: true, tenantId: true, name: true, description: true, owner: true,
+        teamId: true, parentKPIId: true, quarter: true, year: true,
+        measurementUnit: true, target: true, quarterlyGoal: true, qtdGoal: true,
+        qtdAchieved: true, currentWeekValue: true, progressPercent: true,
+        status: true, healthStatus: true, lastNotes: true, lastNotesAt: true,
+        divisionType: true, weeklyTargets: true, currency: true, targetScale: true,
+        createdAt: true, updatedAt: true, createdBy: true, updatedBy: true,
+        owner_user: { select: { id: true, firstName: true, lastName: true } },
+        weeklyValues: { select: { weekNumber: true, value: true, notes: true }, orderBy: { weekNumber: "asc" } },
       },
     });
 
-    if (!kpi) {
-      return NextResponse.json(
-        { success: false, error: "KPI not found" },
-        { status: 404 }
-      );
-    }
+    if (!kpi) return NextResponse.json({ success: false, error: "KPI not found" }, { status: 404 });
+    if (kpi.tenantId !== tenantId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 403 });
 
-    // Check tenant access
-    if (kpi.tenantId !== tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 403 }
-      );
-    }
-
-    const response: ApiResponse<any> = {
-      success: true,
-      data: kpi,
-    };
-
-    return NextResponse.json(response);
+    return NextResponse.json({ success: true, data: kpi });
   } catch (error: any) {
-    console.error(`GET /api/kpi/[id] error:`, error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || "Failed to fetch KPI",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message || "Failed to fetch KPI" }, { status: 500 });
   }
 }
 
-// PUT /api/kpi/[id] - Update KPI
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+    if (!session?.user?.id) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    const tenantId = request.headers.get("x-tenant-id");
-    if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
-    }
+    const tenantId = await getTenantId(session.user.id);
+    if (!tenantId) return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
 
-    // Get existing KPI
-    const existingKPI = await db.kPI.findUnique({
-      where: { id: params.id },
-    });
+    const existingKPI = await db.kPI.findUnique({ where: { id: params.id, deletedAt: null } });
+    if (!existingKPI) return NextResponse.json({ success: false, error: "KPI not found" }, { status: 404 });
+    if (existingKPI.tenantId !== tenantId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 403 });
 
-    if (!existingKPI) {
-      return NextResponse.json(
-        { success: false, error: "KPI not found" },
-        { status: 404 }
-      );
-    }
-
-    // Check tenant access
-    if (existingKPI.tenantId !== tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 403 }
-      );
-    }
-
-    // Parse and validate body
     const body = await request.json();
     const validated = updateKPISchema.parse(body);
-
-    // Store old value for audit
     const oldValue = JSON.stringify(existingKPI);
 
-    // Update KPI
     const updatedKPI = await db.kPI.update({
       where: { id: params.id },
       data: {
@@ -153,137 +73,52 @@ export async function PUT(
         quarterlyGoal: validated.quarterlyGoal,
         qtdGoal: validated.qtdGoal,
         status: validated.status,
+        divisionType: validated.divisionType,
+        weeklyTargets: validated.weeklyTargets ?? undefined,
+        currency: validated.currency ?? null,
+        targetScale: validated.targetScale ?? null,
         updatedBy: session.user.id,
       },
       select: {
-        id: true,
-        name: true,
-        description: true,
-        owner: true,
-        teamId: true,
-        parentKPIId: true,
-        quarter: true,
-        year: true,
-        measurementUnit: true,
-        target: true,
-        quarterlyGoal: true,
-        qtdGoal: true,
-        qtdAchieved: true,
-        progressPercent: true,
-        status: true,
-        healthStatus: true,
-        createdAt: true,
-        updatedAt: true,
-        createdBy: true,
+        id: true, name: true, description: true, owner: true, teamId: true,
+        parentKPIId: true, quarter: true, year: true, measurementUnit: true,
+        target: true, quarterlyGoal: true, qtdGoal: true, qtdAchieved: true,
+        progressPercent: true, status: true, healthStatus: true,
+        divisionType: true, weeklyTargets: true, currency: true, targetScale: true,
+        createdAt: true, updatedAt: true, createdBy: true,
+        owner_user: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
-    // Create audit log
     await db.kPILog.create({
-      data: {
-        tenantId,
-        kpiId: params.id,
-        action: "UPDATE",
-        oldValue,
-        newValue: JSON.stringify(updatedKPI),
-        changedBy: session.user.id,
-      },
+      data: { tenantId, kpiId: params.id, action: "UPDATE", oldValue, newValue: JSON.stringify(updatedKPI), changedBy: session.user.id },
     });
 
-    const response: ApiResponse<any> = {
-      success: true,
-      data: updatedKPI,
-      message: "KPI updated successfully",
-    };
-
-    return NextResponse.json(response);
+    return NextResponse.json({ success: true, data: updatedKPI, message: "KPI updated successfully" });
   } catch (error: any) {
-    console.error(`PUT /api/kpi/[id] error:`, error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || "Failed to update KPI",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message || "Failed to update KPI" }, { status: 500 });
   }
 }
 
-// DELETE /api/kpi/[id] - Delete KPI
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+    if (!session?.user?.id) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    const tenantId = request.headers.get("x-tenant-id");
-    if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
-    }
+    const tenantId = await getTenantId(session.user.id);
+    if (!tenantId) return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
 
-    // Get KPI
-    const kpi = await db.kPI.findUnique({
-      where: { id: params.id },
-    });
+    const kpi = await db.kPI.findUnique({ where: { id: params.id, deletedAt: null } });
+    if (!kpi) return NextResponse.json({ success: false, error: "KPI not found" }, { status: 404 });
+    if (kpi.tenantId !== tenantId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 403 });
 
-    if (!kpi) {
-      return NextResponse.json(
-        { success: false, error: "KPI not found" },
-        { status: 404 }
-      );
-    }
-
-    // Check tenant access
-    if (kpi.tenantId !== tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 403 }
-      );
-    }
-
-    // Store old value for audit
     const oldValue = JSON.stringify(kpi);
+    await db.kPI.update({ where: { id: params.id }, data: { deletedAt: new Date() } });
 
-    // Delete KPI (cascade deletes weekly values, notes, logs)
-    await db.kPI.delete({
-      where: { id: params.id },
-    });
+    await db.kPILog.create({ data: { tenantId, kpiId: params.id, action: "DELETE", oldValue, changedBy: session.user.id } });
 
-    // Create audit log for deletion
-    await db.kPILog.create({
-      data: {
-        tenantId,
-        kpiId: params.id,
-        action: "DELETE",
-        oldValue,
-        changedBy: session.user.id,
-      },
-    });
-
-    const response: ApiResponse<null> = {
-      success: true,
-      message: "KPI deleted successfully",
-    };
-
-    return NextResponse.json(response);
+    return NextResponse.json({ success: true, message: "KPI deleted successfully" });
   } catch (error: any) {
-    console.error(`DELETE /api/kpi/[id] error:`, error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || "Failed to delete KPI",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message || "Failed to delete KPI" }, { status: 500 });
   }
 }

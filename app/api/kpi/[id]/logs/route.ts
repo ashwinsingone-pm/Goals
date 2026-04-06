@@ -12,18 +12,13 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const tenantId = request.headers.get("x-tenant-id");
+    const membership = await db.membership.findFirst({ where: { userId: session.user.id, status: "active" }, orderBy: { createdAt: "asc" } });
+    const tenantId = membership?.tenantId;
     if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
     }
 
     // Check KPI exists and belongs to tenant
@@ -49,21 +44,20 @@ export async function GET(
     // Get audit logs
     const logs = await db.kPILog.findMany({
       where: { kpiId: params.id },
-      select: {
-        id: true,
-        action: true,
-        oldValue: true,
-        newValue: true,
-        changedBy: true,
-        reason: true,
-        createdAt: true,
-      },
+      select: { id: true, action: true, oldValue: true, newValue: true, changedBy: true, reason: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });
 
+    // Resolve user names for changedBy IDs
+    const userIds = [...new Set(logs.map(l => l.changedBy))];
+    const users = await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, lastName: true } });
+    const userMap = Object.fromEntries(users.map(u => [u.id, `${u.firstName} ${u.lastName}`]));
+
+    const enrichedLogs = logs.map(l => ({ ...l, changedByName: userMap[l.changedBy] ?? l.changedBy }));
+
     const response: ApiResponse<any> = {
       success: true,
-      data: logs,
+      data: enrichedLogs,
     };
 
     return NextResponse.json(response);

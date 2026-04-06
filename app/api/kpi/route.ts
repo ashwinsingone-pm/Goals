@@ -5,26 +5,27 @@ import { authOptions } from "@/lib/auth";
 import { createKPISchema, kpiListParamsSchema } from "@/lib/schemas/kpiSchema";
 import { ApiResponse } from "@/lib/services/kpiService";
 
+async function getTenantId(userId: string): Promise<string | null> {
+  const membership = await db.membership.findFirst({
+    where: { userId, status: "active" },
+    orderBy: { createdAt: "asc" },
+  });
+  return membership?.tenantId ?? null;
+}
+
 // GET /api/kpi - List KPIs with filters and pagination
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const tenantId = request.headers.get("x-tenant-id");
+    const tenantId = await getTenantId(session.user.id);
     if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
     }
 
-    // Parse query params
     const searchParams = request.nextUrl.searchParams;
     const params = {
       page: parseInt(searchParams.get("page") || "1"),
@@ -39,11 +40,9 @@ export async function GET(request: NextRequest) {
       sortOrder: (searchParams.get("sortOrder") || "desc") as "asc" | "desc",
     };
 
-    // Validate params
     const validated = kpiListParamsSchema.parse(params);
 
-    // Build filters
-    const where: any = { tenantId };
+    const where: any = { tenantId, deletedAt: null };
     if (validated.status) where.status = validated.status;
     if (validated.owner) where.owner = validated.owner;
     if (validated.teamId) where.teamId = validated.teamId;
@@ -56,14 +55,11 @@ export async function GET(request: NextRequest) {
       ];
     }
 
-    // Build order by
     const orderBy: any = {};
     orderBy[validated.sortBy] = validated.sortOrder;
 
-    // Count total
     const total = await db.kPI.count({ where });
 
-    // Fetch KPIs
     const kpis = await db.kPI.findMany({
       where,
       select: {
@@ -80,12 +76,21 @@ export async function GET(request: NextRequest) {
         quarterlyGoal: true,
         qtdGoal: true,
         qtdAchieved: true,
+        currentWeekValue: true,
         progressPercent: true,
         status: true,
         healthStatus: true,
+        lastNotes: true,
+        lastNotesAt: true,
+        divisionType: true,
+        weeklyTargets: true,
+        currency: true,
+        targetScale: true,
         createdAt: true,
         updatedAt: true,
         createdBy: true,
+        owner_user: { select: { id: true, firstName: true, lastName: true } },
+        weeklyValues: { select: { weekNumber: true, value: true, notes: true }, orderBy: { weekNumber: "asc" } },
       },
       orderBy,
       skip: (validated.page - 1) * validated.pageSize,
@@ -94,24 +99,13 @@ export async function GET(request: NextRequest) {
 
     const response: ApiResponse<any> = {
       success: true,
-      data: {
-        kpis,
-        total,
-        page: validated.page,
-        pageSize: validated.pageSize,
-      },
+      data: { kpis, total, page: validated.page, pageSize: validated.pageSize },
     };
 
     return NextResponse.json(response);
   } catch (error: any) {
     console.error("GET /api/kpi error:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || "Failed to fetch KPIs",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message || "Failed to fetch KPIs" }, { status: 500 });
   }
 }
 
@@ -120,61 +114,36 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const tenantId = request.headers.get("x-tenant-id");
+    const tenantId = await getTenantId(session.user.id);
     if (!tenantId) {
-      return NextResponse.json(
-        { success: false, error: "Missing tenant context" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
     }
 
     const body = await request.json();
     const validated = createKPISchema.parse(body);
 
-    // Check if owner exists
-    const owner = await db.user.findUnique({
-      where: { id: validated.owner },
-    });
+    const owner = await db.user.findUnique({ where: { id: validated.owner } });
     if (!owner) {
-      return NextResponse.json(
-        { success: false, error: "Owner user not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ success: false, error: "Owner user not found" }, { status: 404 });
     }
 
-    // Check if team exists (if provided)
     if (validated.teamId) {
-      const team = await db.team.findUnique({
-        where: { id: validated.teamId },
-      });
+      const team = await db.team.findUnique({ where: { id: validated.teamId } });
       if (!team || team.tenantId !== tenantId) {
-        return NextResponse.json(
-          { success: false, error: "Team not found" },
-          { status: 404 }
-        );
+        return NextResponse.json({ success: false, error: "Team not found" }, { status: 404 });
       }
     }
 
-    // Check if parent KPI exists (if provided)
     if (validated.parentKPIId) {
-      const parentKPI = await db.kPI.findUnique({
-        where: { id: validated.parentKPIId },
-      });
+      const parentKPI = await db.kPI.findUnique({ where: { id: validated.parentKPIId } });
       if (!parentKPI || parentKPI.tenantId !== tenantId) {
-        return NextResponse.json(
-          { success: false, error: "Parent KPI not found" },
-          { status: 404 }
-        );
+        return NextResponse.json({ success: false, error: "Parent KPI not found" }, { status: 404 });
       }
     }
 
-    // Create KPI
     const kpi = await db.kPI.create({
       data: {
         tenantId,
@@ -199,8 +168,6 @@ export async function POST(request: NextRequest) {
         name: true,
         description: true,
         owner: true,
-        teamId: true,
-        parentKPIId: true,
         quarter: true,
         year: true,
         measurementUnit: true,
@@ -214,35 +181,17 @@ export async function POST(request: NextRequest) {
         createdAt: true,
         updatedAt: true,
         createdBy: true,
+        owner_user: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
-    // Create audit log
     await db.kPILog.create({
-      data: {
-        tenantId,
-        kpiId: kpi.id,
-        action: "CREATE",
-        newValue: JSON.stringify(kpi),
-        changedBy: session.user.id,
-      },
+      data: { tenantId, kpiId: kpi.id, action: "CREATE", newValue: JSON.stringify(kpi), changedBy: session.user.id },
     });
 
-    const response: ApiResponse<any> = {
-      success: true,
-      data: kpi,
-      message: "KPI created successfully",
-    };
-
-    return NextResponse.json(response, { status: 201 });
+    return NextResponse.json({ success: true, data: kpi, message: "KPI created successfully" }, { status: 201 });
   } catch (error: any) {
     console.error("POST /api/kpi error:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || "Failed to create KPI",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message || "Failed to create KPI" }, { status: 500 });
   }
 }
