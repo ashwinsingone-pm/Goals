@@ -100,3 +100,17 @@ export function useUpdateWeeklyStatus(priorityId: string) {
     },
   });
 }
+
+export function useDeletePriority() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/priority/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to delete priority");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: priorityKeys.lists() });
+    },
+  });
+}

@@ -23,17 +23,19 @@ const FISCAL_YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 1 + i);
 const WEEK_OPTIONS = Array.from({ length: 13 }, (_, i) => i + 1);
 
 const STATUS_OPTIONS = [
+  { value: "not-applicable", label: "Not Applicable", selectedClass: "bg-gray-100 text-gray-600 border-gray-300 ring-2 ring-gray-300", baseClass: "bg-white text-gray-400 border-gray-200 hover:bg-gray-50" },
+  { value: "not-yet-started", label: "Not Yet Started", selectedClass: "bg-red-100 text-red-700 border-red-300 ring-2 ring-red-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-red-50" },
+  { value: "behind-schedule", label: "Behind Schedule", selectedClass: "bg-amber-100 text-amber-700 border-amber-300 ring-2 ring-amber-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-amber-50" },
   { value: "on-track", label: "On Track", selectedClass: "bg-green-100 text-green-700 border-green-300 ring-2 ring-green-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-green-50" },
-  { value: "at-risk", label: "At Risk", selectedClass: "bg-yellow-100 text-yellow-700 border-yellow-300 ring-2 ring-yellow-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-yellow-50" },
-  { value: "behind", label: "Behind", selectedClass: "bg-red-100 text-red-700 border-red-300 ring-2 ring-red-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-red-50" },
-  { value: "", label: "Clear", selectedClass: "bg-gray-100 text-gray-600 border-gray-300 ring-2 ring-gray-300", baseClass: "bg-white text-gray-400 border-gray-200 hover:bg-gray-50" },
+  { value: "completed", label: "Completed", selectedClass: "bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-blue-50" },
+  { value: "", label: "Clear", selectedClass: "bg-gray-100 text-gray-500 border-gray-300 ring-2 ring-gray-200", baseClass: "bg-white text-gray-300 border-gray-200 hover:bg-gray-50" },
 ];
 
 const OVERALL_STATUS_OPTIONS = [
-  { value: "not-started", label: "Not Started" },
+  { value: "not-applicable", label: "Not Applicable" },
+  { value: "not-yet-started", label: "Not Yet Started" },
+  { value: "behind-schedule", label: "Behind Schedule" },
   { value: "on-track", label: "On Track" },
-  { value: "at-risk", label: "At Risk" },
-  { value: "behind", label: "Behind" },
   { value: "completed", label: "Completed" },
 ];
 
@@ -152,9 +154,9 @@ export function PriorityLogModal({ priority, onClose, onSuccess }: Props) {
   const endWeek = parseInt(form.endWeek) || 13;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative ml-auto h-full w-[520px] bg-white shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
           <div>
