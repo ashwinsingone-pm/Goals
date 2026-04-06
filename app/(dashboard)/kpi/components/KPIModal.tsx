@@ -123,9 +123,9 @@ export function KPIModal({ mode, kpi, defaultYear, defaultQuarter, onClose, onSu
   const weeklyTarget = actualTarget > 0 ? actualTarget / 13 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative ml-auto h-full w-[520px] bg-white shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
           <div>
@@ -185,8 +185,8 @@ export function KPIModal({ mode, kpi, defaultYear, defaultQuarter, onClose, onSu
             </div>
           </div>
 
-          {/* Measurement Unit + Currency + Target Value */}
-          <div className={`grid gap-3 ${isCurrency ? "grid-cols-[140px_160px_1fr]" : "grid-cols-[160px_1fr]"}`}>
+          {/* Measurement Unit + Currency */}
+          <div className={`grid gap-3 ${isCurrency ? "grid-cols-2" : "grid-cols-1"}`}>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Measurement Unit <span className="text-red-500">*</span>
@@ -207,33 +207,34 @@ export function KPIModal({ mode, kpi, defaultYear, defaultQuarter, onClose, onSu
                 </select>
               </div>
             )}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Target Value</label>
-              {/* Connected input group */}
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden focus-within:ring-1 focus-within:ring-blue-400 focus-within:border-blue-400">
-                {isCurrency && (
-                  <span className="flex items-center px-2.5 bg-gray-50 border-r border-gray-200 text-xs text-gray-500 select-none whitespace-nowrap flex-shrink-0">
-                    {currencyObj.symbol}
-                  </span>
-                )}
-                <input type="number" min="0" value={form.target} onChange={e => set("target", e.target.value)}
-                  placeholder="0"
-                  className="flex-1 px-3 py-2 text-xs focus:outline-none bg-white min-w-0" />
-                {isCurrency && (
-                  <select value={form.targetScale} onChange={e => setTargetScale(e.target.value)}
-                    className="border-l border-gray-200 pl-2 pr-1 py-2 text-xs bg-white focus:outline-none text-gray-600 flex-shrink-0 cursor-pointer">
-                    {scales.map(s => (
-                      <option key={s.label} value={s.label}>{s.label || "—"}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              {isCurrency && form.targetScale && actualTarget > 0 && (
-                <p className="text-[10px] text-gray-400 mt-1">
-                  = {formatActual(actualTarget, currencyObj.symbol, form.currency)}
-                </p>
+          </div>
+
+          {/* Target Value */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Target Value</label>
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden focus-within:ring-1 focus-within:ring-blue-400 focus-within:border-blue-400">
+              {isCurrency && (
+                <span className="flex items-center px-2.5 bg-gray-50 border-r border-gray-200 text-xs text-gray-500 select-none whitespace-nowrap flex-shrink-0">
+                  {currencyObj.symbol}
+                </span>
+              )}
+              <input type="number" min="0" value={form.target} onChange={e => set("target", e.target.value)}
+                placeholder="0"
+                className="flex-1 px-3 py-2 text-xs focus:outline-none bg-white min-w-0" />
+              {isCurrency && (
+                <select value={form.targetScale} onChange={e => setTargetScale(e.target.value)}
+                  className="border-l border-gray-200 pl-2 pr-1 py-2 text-xs bg-white focus:outline-none text-gray-600 flex-shrink-0 cursor-pointer">
+                  {scales.map(s => (
+                    <option key={s.label} value={s.label}>{s.label || "—"}</option>
+                  ))}
+                </select>
               )}
             </div>
+            {isCurrency && form.targetScale && actualTarget > 0 && (
+              <p className="text-[10px] text-gray-400 mt-1">
+                = {formatActual(actualTarget, currencyObj.symbol, form.currency)}
+              </p>
+            )}
           </div>
 
           {/* Status */}

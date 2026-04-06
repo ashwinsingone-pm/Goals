@@ -1,155 +1,716 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useState, useRef, useEffect, CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { useKPIs } from "@/lib/hooks/useKPI";
+import { usePriorities } from "@/lib/hooks/usePriority";
+import { useWWWItems } from "@/lib/hooks/useWWW";
+import { useUsers } from "@/lib/hooks/useUsers";
+import type { KPIRow } from "@/lib/types/kpi";
+import type { PriorityRow } from "@/lib/types/priority";
+import type { WWWItem } from "@/lib/types/www";
+import {
+  getFiscalYear, getFiscalQuarter, fiscalYearLabel,
+  weekDateLabel, ALL_WEEKS, getCurrentFiscalWeek,
+} from "@/lib/utils/fiscal";
+import { progressColor, weekCellColors } from "@/lib/utils/kpiHelpers";
 
-const YEARS = ["2024-2025", "2025-2026", "2026-2027", "2027-2028", "2028-2029"];
-const QUARTERS = ["Q1", "Q2", "Q3", "Q4"];
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-type Tab = "my" | "team";
+const CURRENT_YEAR = getFiscalYear();
+const FISCAL_YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 1 + i);
+const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
 
-/* ─── Section Card ─── */
-function SectionCard({
-  badge,
-  badgeColor = "bg-blue-600",
-  rightContent,
-  children,
-}: {
-  badge: string;
-  badgeColor?: string;
-  rightContent?: React.ReactNode;
-  children: React.ReactNode;
-}) {
+// Shared week column definition used by KPI and Priority sections
+const WEEK_COLS: ColDef[] = ALL_WEEKS.map(w => ({ key: `w${w}`, label: `Week ${w}`, width: 64 }));
+
+// ── Status helpers ────────────────────────────────────────────────────────────
+
+const STATUS_META: Record<string, { label: string; bg: string }> = {
+  "not-applicable":  { label: "Not Applicable",  bg: "bg-gray-400"  },
+  "not-yet-started": { label: "Not Yet Started", bg: "bg-red-500"   },
+  "behind-schedule": { label: "Behind Schedule", bg: "bg-amber-400" },
+  "on-track":        { label: "On Track",        bg: "bg-green-500" },
+  "completed":       { label: "Completed",       bg: "bg-blue-500"  },
+};
+
+function formatDate(iso?: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  } catch { return "—"; }
+}
+
+// ── Tooltips ──────────────────────────────────────────────────────────────────
+
+function NoteTooltip({ text, children }: { text: string | null | undefined; children: React.ReactNode }) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  if (!text) return <>{children}</>;
+
+  function handleEnter() {
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left });
+    }
+  }
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      {/* Section header bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-        <span className={cn("text-xs font-semibold text-white px-3 py-1 rounded", badgeColor)}>
-          {badge}
-        </span>
-        {rightContent}
+    <div ref={ref} onMouseEnter={handleEnter} onMouseLeave={() => setPos(null)}>
+      {children}
+      {pos && createPortal(
+        <div style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
+          className="w-64 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 shadow-xl pointer-events-none">
+          <div className="absolute bottom-full left-4 border-4 border-transparent border-b-gray-900" />
+          <p className="font-medium text-gray-200 mb-1">Note</p>
+          <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">{text}</p>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function WeekCellTooltip({ label, dateRange, content, children }: {
+  label: string; dateRange: string; content: React.ReactNode; children: React.ReactNode;
+}) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  function handleEnter() {
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left + r.width / 2 });
+    }
+  }
+
+  return (
+    <div ref={ref} className="inline-flex justify-center w-full h-full"
+      onMouseEnter={handleEnter} onMouseLeave={() => setPos(null)}>
+      {children}
+      {pos && createPortal(
+        <div style={{ position: "fixed", top: pos.top, left: pos.left, transform: "translateX(-50%)", zIndex: 9999 }}
+          className="w-44 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 shadow-xl pointer-events-none">
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900" />
+          <p className="font-semibold text-gray-200 mb-0.5">{label}</p>
+          <p className="text-gray-400 text-[10px] mb-1.5">{dateRange}</p>
+          {content}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+// ── Column types & helpers ────────────────────────────────────────────────────
+
+interface ColDef { key: string; label: string; width: number; }
+
+function colW(col: ColDef) { return { width: col.width, minWidth: col.width }; }
+function weekNum(col: ColDef) { return parseInt(col.key.slice(1), 10); }
+
+function getStickyStyle(colKey: string, frozenUpTo: string | null, cols: ColDef[], baseZ = 10): CSSProperties {
+  if (!frozenUpTo) return {};
+  const frozenIdx = cols.findIndex(c => c.key === frozenUpTo);
+  const thisIdx = cols.findIndex(c => c.key === colKey);
+  if (thisIdx === -1 || thisIdx > frozenIdx) return {};
+  const left = cols.slice(0, thisIdx).reduce((s, c) => s + c.width, 0);
+  return { position: "sticky", left, zIndex: baseZ };
+}
+
+function getFrozenBg(colKey: string, frozenUpTo: string | null, cols: ColDef[], rowBg: string): string {
+  if (!frozenUpTo) return "";
+  const frozenIdx = cols.findIndex(c => c.key === frozenUpTo);
+  const thisIdx = cols.findIndex(c => c.key === colKey);
+  return thisIdx !== -1 && thisIdx <= frozenIdx ? rowBg : "";
+}
+
+// ── Shared primitives ─────────────────────────────────────────────────────────
+
+const TH_BASE = "group bg-gray-700 text-white text-[11px] font-semibold whitespace-nowrap border-r border-b border-gray-600 select-none";
+
+function CalendarIcon() {
+  return (
+    <svg className="h-3 w-3 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function DateCell({ iso }: { iso?: string | null }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <CalendarIcon />
+      <span className="text-xs text-blue-600">{formatDate(iso)}</span>
+    </div>
+  );
+}
+
+function NoteCell({ text }: { text: string | null | undefined }) {
+  return (
+    <NoteTooltip text={text}>
+      <span className="text-[11px] text-gray-500 line-clamp-2 cursor-default">
+        {text ?? <span className="text-gray-300">No notes</span>}
+      </span>
+    </NoteTooltip>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return <div className="px-4 py-10 text-center text-sm text-gray-400">{label}</div>;
+}
+
+function Spinner() {
+  return (
+    <div className="flex items-center justify-center py-10">
+      <svg className="h-5 w-5 animate-spin text-gray-300" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+    </div>
+  );
+}
+
+function Section({ badge, count, children }: { badge: string; count?: number; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm" style={{ overflow: "clip" }}>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+        <span className="text-xs font-bold text-white bg-gray-800 px-2.5 py-1 rounded-md">{badge}</span>
+        {count !== undefined && count > 0 && (
+          <span className="text-xs text-gray-400">{count} item{count !== 1 ? "s" : ""}</span>
+        )}
       </div>
-      {/* Content */}
-      <div className="px-4 py-8 flex items-center justify-center text-sm text-gray-500">
+      {children}
+    </div>
+  );
+}
+
+function SectionTable({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+      <table className="border-separate border-spacing-0" style={{ minWidth: "max-content", tableLayout: "fixed" }}>
         {children}
+      </table>
+    </div>
+  );
+}
+
+// ── ColMenu ───────────────────────────────────────────────────────────────────
+
+function ColMenu({ colKey, frozenUpTo, allColKeys, onFreeze }: {
+  colKey: string;
+  frozenUpTo: string | null;
+  allColKeys: string[];
+  onFreeze: (key: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const frozenIdx = frozenUpTo ? allColKeys.indexOf(frozenUpTo) : -1;
+  const thisIdx = allColKeys.indexOf(colKey);
+  const isFrozen = frozenIdx >= thisIdx && thisIdx !== -1 && frozenUpTo !== null;
+  const isBoundary = frozenUpTo === colKey;
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  return (
+    <div className="relative flex-shrink-0 inline-flex items-center gap-0.5" ref={ref}>
+      {isBoundary && (
+        <svg className="h-3 w-3 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+        </svg>
+      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="p-0.5 rounded hover:bg-white/20 text-gray-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-[100] py-1 text-xs">
+          <button
+            onClick={() => { onFreeze(isFrozen ? null : colKey); setOpen(false); }}
+            className="flex items-center gap-2 w-full px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+          >
+            <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {isFrozen
+                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 018 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />}
+            </svg>
+            {isFrozen ? "Unfreeze Column" : "Freeze Column"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Shared thead for sections that have static cols + week cols
+function WeekTableHead({ staticCols, allCols, frozenUpTo, allColKeys, onFreeze, year, quarter }: {
+  staticCols: ColDef[];
+  allCols: ColDef[];
+  frozenUpTo: string | null;
+  allColKeys: string[];
+  onFreeze: (key: string | null) => void;
+  year: number;
+  quarter: string;
+}) {
+  return (
+    <thead>
+      <tr>
+        {staticCols.map(col => (
+          <th key={col.key} className={`sticky top-0 z-30 ${TH_BASE}`}
+            style={{ ...getStickyStyle(col.key, frozenUpTo, allCols, 30), ...colW(col) }}>
+            <div className="flex items-center gap-1 px-4 py-3">
+              <span className="flex-1 truncate">{col.label}</span>
+              <ColMenu colKey={col.key} frozenUpTo={frozenUpTo} allColKeys={allColKeys} onFreeze={onFreeze} />
+            </div>
+          </th>
+        ))}
+        {WEEK_COLS.map(col => (
+          <th key={col.key} className={`sticky top-0 z-20 ${TH_BASE}`}
+            style={{ ...getStickyStyle(col.key, frozenUpTo, allCols, 20), ...colW(col) }}>
+            <div className="flex flex-col items-center px-1 py-1.5 gap-0.5">
+              <span>{col.label}</span>
+              <span className="text-[9px] font-normal opacity-60">{weekDateLabel(year, quarter, weekNum(col))}</span>
+            </div>
+          </th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
+// ── KPI mini cards ────────────────────────────────────────────────────────────
+
+function KPICard({ kpi }: { kpi: KPIRow }) {
+  const colors = progressColor(kpi.progressPercent ?? 0);
+  const achieved = kpi.qtdAchieved ?? 0;
+  const goal = kpi.quarterlyGoal ?? kpi.target ?? 0;
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 hover:shadow-sm transition-shadow">
+      <p className="text-[11px] text-gray-500 font-medium truncate mb-1.5" title={kpi.name}>{kpi.name}</p>
+      <div className="flex items-baseline gap-1 mb-2">
+        <span className="text-base font-bold text-gray-800">{achieved}</span>
+        <span className="text-xs text-gray-400">/ {goal}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-semibold ${colors.text}`}>{(kpi.progressPercent ?? 0).toFixed(0)}%</span>
+        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className={`h-1.5 rounded-full ${colors.bar}`} style={{ width: `${Math.min(kpi.progressPercent ?? 0, 100)}%` }} />
+        </div>
       </div>
     </div>
   );
 }
 
-/* ─── Select Dropdown ─── */
-function SelectDropdown({
-  value,
-  onChange,
-  options,
-  placeholder,
-  className,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-  placeholder?: string;
-  className?: string;
-}) {
+// ── KPI section ───────────────────────────────────────────────────────────────
+
+const KPI_COLS: ColDef[] = [
+  { key: "name",        label: "KPI Name",         width: 200 },
+  { key: "unit",        label: "Measurement Unit", width: 130 },
+  { key: "qtrGoal",     label: "Quarter Goal",     width: 110 },
+  { key: "qtdGoal",     label: "QTD Goal",         width: 80  },
+  { key: "qtdAchieved", label: "QTD Achieved",     width: 100 },
+  { key: "weeklyGoal",  label: "Weekly Goal",      width: 90  },
+  { key: "lastNotes",   label: "Last Notes",       width: 180 },
+];
+
+const ALL_KPI_COLS: ColDef[] = [...KPI_COLS, ...WEEK_COLS];
+
+function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; quarter: string }) {
+  const [frozenUpTo, setFrozenUpTo] = useState<string | null>("name");
+  const allColKeys = ALL_KPI_COLS.map(c => c.key);
+
+  if (!kpis.length) return <EmptyState label="No KPI data found" />;
+
   return (
-    <div className={cn("relative", className)}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-8 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-      >
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
-      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+    <SectionTable>
+      <WeekTableHead
+        staticCols={KPI_COLS} allCols={ALL_KPI_COLS}
+        frozenUpTo={frozenUpTo} allColKeys={allColKeys} onFreeze={setFrozenUpTo}
+        year={year} quarter={quarter}
+      />
+      <tbody>
+        {kpis.map((kpi, ri) => {
+          const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
+          const weeklyGoal = (kpi.qtdGoal ?? kpi.target ?? 0) / 13;
+          const weekMap: Record<number, number | null> = {};
+          const weekNoteMap: Record<number, string | null> = {};
+          (kpi.weeklyValues ?? []).forEach(wv => {
+            weekMap[wv.weekNumber] = wv.value ?? null;
+            weekNoteMap[wv.weekNumber] = wv.notes ?? null;
+          });
+          const weeklyTargets = kpi.weeklyTargets as Record<string, number> | null | undefined;
+
+          return (
+            <tr key={kpi.id} className={`${rowBg} hover:bg-blue-50 transition-colors`}>
+              {KPI_COLS.map(col => {
+                const sticky = getStickyStyle(col.key, frozenUpTo, ALL_KPI_COLS);
+                const frozenBg = getFrozenBg(col.key, frozenUpTo, ALL_KPI_COLS, rowBg);
+                const base = `border-r border-b border-gray-100 px-4 py-3 ${frozenBg}`;
+
+                if (col.key === "lastNotes") return (
+                  <td key={col.key} className={base} style={{ ...sticky, ...colW(col) }}>
+                    <NoteCell text={kpi.lastNotes} />
+                  </td>
+                );
+
+                if (col.key === "qtdAchieved") {
+                  const achieved = kpi.qtdAchieved ?? 0;
+                  const goal = kpi.qtdGoal ?? kpi.target ?? 0;
+                  const pct = goal > 0 ? (achieved / goal) * 100 : 0;
+                  const colors = kpi.qtdAchieved != null ? progressColor(pct) : null;
+                  return (
+                    <td key={col.key}
+                      className={`border-r border-b border-gray-100 px-4 py-3 text-center ${colors ? colors.bar : frozenBg}`}
+                      style={{ ...sticky, ...colW(col) }}>
+                      <span className={`text-xs font-semibold ${colors ? "text-white" : "text-gray-300"}`}>
+                        {kpi.qtdAchieved ?? "—"}
+                      </span>
+                    </td>
+                  );
+                }
+
+                const content: Record<string, React.ReactNode> = {
+                  name:       <span className="text-xs font-medium text-gray-800 line-clamp-2 block">{kpi.name}</span>,
+                  unit:       <span className="text-xs text-gray-500">{kpi.measurementUnit}</span>,
+                  qtrGoal:    <span className="text-xs text-gray-700">{kpi.quarterlyGoal ?? kpi.target ?? "—"}</span>,
+                  qtdGoal:    <span className="text-xs text-gray-700">{kpi.qtdGoal ?? "—"}</span>,
+                  weeklyGoal: <span className="text-xs text-gray-700">{weeklyGoal > 0 ? weeklyGoal.toFixed(1) : "—"}</span>,
+                };
+
+                return (
+                  <td key={col.key} className={base} style={{ ...sticky, ...colW(col) }}>
+                    {content[col.key]}
+                  </td>
+                );
+              })}
+              {WEEK_COLS.map(col => {
+                const w = weekNum(col);
+                const val = weekMap[w];
+                const note = weekNoteMap[w];
+                const wTarget = weeklyTargets ? (weeklyTargets[String(w)] ?? 0) : weeklyGoal;
+                const { bg, text } = weekCellColors(val, wTarget);
+                const frozenBg = getFrozenBg(col.key, frozenUpTo, ALL_KPI_COLS, rowBg);
+                return (
+                  <td key={col.key}
+                    className={`border-r border-b border-gray-100 px-0 py-0 ${bg || frozenBg}`}
+                    style={{ ...getStickyStyle(col.key, frozenUpTo, ALL_KPI_COLS), ...colW(col) }}>
+                    <WeekCellTooltip
+                      label={col.label} dateRange={weekDateLabel(year, quarter, w)}
+                      content={
+                        <div className="space-y-1">
+                          <div className="flex justify-between gap-3">
+                            <span className="text-gray-400">Value</span>
+                            <span className="text-white font-medium">{val ?? "—"}</span>
+                          </div>
+                          <div className="flex justify-between gap-3">
+                            <span className="text-gray-400">Target</span>
+                            <span className="text-white font-medium">{wTarget > 0 ? wTarget.toFixed(1) : "—"}</span>
+                          </div>
+                          {note && (
+                            <p className="text-gray-300 text-[10px] mt-1.5 pt-1.5 border-t border-gray-700 leading-relaxed whitespace-pre-wrap">{note}</p>
+                          )}
+                        </div>
+                      }
+                    >
+                      <div className="flex items-center justify-center w-full h-full min-h-[36px]">
+                        <span className={`text-xs font-semibold ${text}`}>{val ?? "–"}</span>
+                      </div>
+                    </WeekCellTooltip>
+                  </td>
+                );
+              })}
+            </tr>
+          );
+        })}
+      </tbody>
+    </SectionTable>
+  );
+}
+
+// ── Priority section ──────────────────────────────────────────────────────────
+
+const PRI_COLS: ColDef[] = [
+  { key: "name",      label: "Priority Name", width: 200 },
+  { key: "startWeek", label: "Start Week",    width: 160 },
+  { key: "endWeek",   label: "End Week",      width: 160 },
+  { key: "lastNotes", label: "Last Notes",    width: 180 },
+];
+
+const ALL_PRI_COLS: ColDef[] = [...PRI_COLS, ...WEEK_COLS];
+
+function PrioritySection({ priorities, year, quarter }: { priorities: PriorityRow[]; year: number; quarter: string }) {
+  const [frozenUpTo, setFrozenUpTo] = useState<string | null>("name");
+  const allColKeys = ALL_PRI_COLS.map(c => c.key);
+
+  if (!priorities.length) return <EmptyState label="No Priority data found" />;
+
+  return (
+    <SectionTable>
+      <WeekTableHead
+        staticCols={PRI_COLS} allCols={ALL_PRI_COLS}
+        frozenUpTo={frozenUpTo} allColKeys={allColKeys} onFreeze={setFrozenUpTo}
+        year={year} quarter={quarter}
+      />
+      <tbody>
+        {priorities.map((p, ri) => {
+          const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
+          const start = p.startWeek ?? 1;
+          const end = p.endWeek ?? 13;
+          const statusMap: Record<number, string> = {};
+          const weekNoteMap: Record<number, string | null> = {};
+          p.weeklyStatuses.forEach(ws => {
+            statusMap[ws.weekNumber] = ws.status;
+            weekNoteMap[ws.weekNumber] = ws.notes ?? null;
+          });
+          const lastNote = p.weeklyStatuses.slice().reverse().find(ws => ws.notes)?.notes ?? null;
+
+          return (
+            <tr key={p.id} className={`${rowBg} hover:bg-blue-50 transition-colors`}>
+              {PRI_COLS.map(col => {
+                const sticky = getStickyStyle(col.key, frozenUpTo, ALL_PRI_COLS);
+                const frozenBg = getFrozenBg(col.key, frozenUpTo, ALL_PRI_COLS, rowBg);
+                const base = `border-r border-b border-gray-100 px-4 py-3 ${frozenBg}`;
+
+                if (col.key === "lastNotes") return (
+                  <td key={col.key} className={base} style={{ ...sticky, ...colW(col) }}>
+                    <NoteCell text={lastNote} />
+                  </td>
+                );
+
+                const content: Record<string, React.ReactNode> = {
+                  name:      <span className="text-xs font-medium text-gray-800 line-clamp-2 block">{p.name}</span>,
+                  startWeek: <span className="text-xs text-gray-500 whitespace-nowrap">Week {start} · {weekDateLabel(year, quarter, start)}</span>,
+                  endWeek:   <span className="text-xs text-gray-500 whitespace-nowrap">Week {end} · {weekDateLabel(year, quarter, end)}</span>,
+                };
+
+                return (
+                  <td key={col.key} className={base} style={{ ...sticky, ...colW(col) }}>
+                    {content[col.key]}
+                  </td>
+                );
+              })}
+              {WEEK_COLS.map(col => {
+                const w = weekNum(col);
+                const inRange = w >= start && w <= end;
+                const status = statusMap[w] ?? "";
+                const meta = STATUS_META[status];
+                const bg = inRange ? (meta?.bg ?? "") : "";
+                const frozenBg = getFrozenBg(col.key, frozenUpTo, ALL_PRI_COLS, rowBg);
+                const sticky = getStickyStyle(col.key, frozenUpTo, ALL_PRI_COLS);
+
+                if (!inRange) {
+                  return (
+                    <td key={col.key}
+                      className={`border-r border-b border-gray-100 px-0 py-0 bg-gray-50 ${frozenBg}`}
+                      style={{ ...sticky, ...colW(col) }}>
+                      <div className="flex items-center justify-center w-full min-h-[36px]">
+                        <svg className="h-3 w-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </div>
+                    </td>
+                  );
+                }
+
+                return (
+                  <td key={col.key}
+                    className={`border-r border-b border-gray-100 px-0 py-0 ${bg || frozenBg}`}
+                    style={{ ...sticky, ...colW(col) }}>
+                    <WeekCellTooltip
+                      label={col.label} dateRange={weekDateLabel(year, quarter, w)}
+                      content={
+                        <div className="space-y-1">
+                          <p className="text-white font-medium">{meta?.label ?? "No status"}</p>
+                          {weekNoteMap[w] && (
+                            <p className="text-gray-300 text-[10px] pt-1.5 border-t border-gray-700 leading-relaxed whitespace-pre-wrap">{weekNoteMap[w]}</p>
+                          )}
+                        </div>
+                      }
+                    >
+                      <div className="flex items-center justify-center w-full min-h-[36px]" />
+                    </WeekCellTooltip>
+                  </td>
+                );
+              })}
+            </tr>
+          );
+        })}
+      </tbody>
+    </SectionTable>
+  );
+}
+
+// ── WWW section ───────────────────────────────────────────────────────────────
+
+const WWW_COLS: ColDef[] = [
+  { key: "who",         label: "Who?",         width: 160 },
+  { key: "when",        label: "When?",        width: 110 },
+  { key: "what",        label: "What?",        width: 280 },
+  { key: "revisedDate", label: "Revised Date", width: 130 },
+  { key: "status",      label: "Status",       width: 140 },
+  { key: "notes",       label: "Notes",        width: 300 },
+];
+
+function WWWSection({ items }: { items: WWWItem[] }) {
+  const [frozenUpTo, setFrozenUpTo] = useState<string | null>("who");
+  const allColKeys = WWW_COLS.map(c => c.key);
+
+  if (!items.length) return <EmptyState label="No WWW data found" />;
+
+  return (
+    <div className="overflow-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+      <table className="border-separate border-spacing-0" style={{ tableLayout: "fixed", minWidth: "max-content", width: "100%" }}>
+        <thead>
+          <tr>
+            {WWW_COLS.map(col => (
+              <th key={col.key} className={`sticky top-0 z-20 ${TH_BASE}`}
+                style={{ ...getStickyStyle(col.key, frozenUpTo, WWW_COLS, 20), ...colW(col) }}>
+                <div className="flex items-center gap-1 px-4 py-3">
+                  <span className="flex-1 truncate">{col.label}</span>
+                  <ColMenu colKey={col.key} frozenUpTo={frozenUpTo} allColKeys={allColKeys} onFreeze={setFrozenUpTo} />
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, ri) => {
+            const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
+            const whoName = item.who_user ? `${item.who_user.firstName} ${item.who_user.lastName}` : "—";
+            const lastRevised = item.revisedDates?.length ? item.revisedDates[item.revisedDates.length - 1] : null;
+            const statusMeta = STATUS_META[item.status];
+
+            return (
+              <tr key={item.id} className={`${rowBg} hover:bg-blue-50 transition-colors`}>
+                {WWW_COLS.map(col => {
+                  const sticky = getStickyStyle(col.key, frozenUpTo, WWW_COLS);
+                  const frozenBg = getFrozenBg(col.key, frozenUpTo, WWW_COLS, rowBg);
+
+                  if (col.key === "status") {
+                    const bg = statusMeta?.bg ?? "";
+                    return (
+                      <td key={col.key}
+                        className={`border-r border-b border-gray-100 px-4 py-3 text-center ${bg || frozenBg}`}
+                        style={{ ...sticky, ...colW(col) }}>
+                        <span className={`text-xs font-semibold ${bg ? "text-white" : "text-gray-400"}`}>
+                          {statusMeta?.label ?? "—"}
+                        </span>
+                      </td>
+                    );
+                  }
+
+                  const content: Record<string, React.ReactNode> = {
+                    who:         <span className="text-xs font-medium text-gray-800 truncate block">{whoName}</span>,
+                    when:        <DateCell iso={item.when} />,
+                    what:        <span className="text-xs text-gray-800 line-clamp-2 block">{item.what}</span>,
+                    revisedDate: lastRevised ? <DateCell iso={lastRevised} /> : <span className="text-xs text-gray-300">—</span>,
+                    notes:       <NoteTooltip text={item.notes}><span className="text-xs text-gray-600 line-clamp-2 cursor-default">{item.notes || <span className="text-gray-300">—</span>}</span></NoteTooltip>,
+                  };
+
+                  return (
+                    <td key={col.key}
+                      className={`border-r border-b border-gray-100 px-4 py-3 ${frozenBg}`}
+                      style={{ ...sticky, ...colW(col) }}>
+                      {content[col.key]}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("my");
-  const [year, setYear] = useState("2027-2028");
-  const [quarter, setQuarter] = useState("");
-  const [wwwFilter, setWwwFilter] = useState("Not Applicable, Be...");
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [quarter, setQuarter] = useState<string>(getFiscalQuarter());
+  const [filterOwner, setFilterOwner] = useState("");
+
+  const { data: users = [] } = useUsers();
+  const { data: kpiData, isLoading: kpiLoading } = useKPIs({ year, quarter, owner: filterOwner || undefined });
+  const kpis: KPIRow[] = (kpiData?.data ?? []) as KPIRow[];
+  const { data: allPriorities = [], isLoading: priLoading } = usePriorities(year, quarter);
+  const priorities = filterOwner ? allPriorities.filter(p => p.owner === filterOwner) : allPriorities;
+  const { data: allWWW = [], isLoading: wwwLoading } = useWWWItems({});
+  const wwwItems = filterOwner ? allWWW.filter(w => w.who === filterOwner) : allWWW;
+
+  const currentWeek = getCurrentFiscalWeek(year, quarter);
+
+  const selectCls = "px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white text-gray-700";
 
   return (
-    <div className="p-6 max-w-6xl">
-      {/* Page title */}
-      <h1 className="text-xl font-bold text-gray-900 mb-5">Dashboard</h1>
-
-      {/* Controls bar */}
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-        {/* Tabs */}
-        <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
-          <button
-            onClick={() => setActiveTab("my")}
-            className={cn(
-              "px-5 py-2 text-sm font-medium transition-colors",
-              activeTab === "my"
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
-            )}
-          >
-            My Dashboard
-          </button>
-          <button
-            onClick={() => setActiveTab("team")}
-            className={cn(
-              "px-5 py-2 text-sm font-medium border-l border-gray-200 transition-colors",
-              activeTab === "team"
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
-            )}
-          >
-            Team
-          </button>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-3.5 border-b border-gray-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-sm font-semibold text-gray-800">Dashboard</h1>
+          <span className="text-[11px] bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-medium">
+            Week {currentWeek}
+          </span>
         </div>
-
-        {/* Year + Quarter selectors */}
         <div className="flex items-center gap-2">
-          <SelectDropdown
-            value={year}
-            onChange={setYear}
-            options={YEARS}
-          />
-          <SelectDropdown
-            value={quarter}
-            onChange={setQuarter}
-            options={QUARTERS}
-            placeholder="Select Quarter"
-          />
+          <select value={filterOwner} onChange={e => setFilterOwner(e.target.value)} className={selectCls}>
+            <option value="">All owners</option>
+            {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>)}
+          </select>
+          <select value={year} onChange={e => setYear(Number(e.target.value))} className={selectCls}>
+            {FISCAL_YEARS.map(y => <option key={y} value={y}>{fiscalYearLabel(y)}</option>)}
+          </select>
+          <select value={quarter} onChange={e => setQuarter(e.target.value)} className={selectCls}>
+            {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
         </div>
       </div>
 
-      {/* Sections */}
-      <div className="space-y-4">
-        {/* KPI Section */}
-        <SectionCard badge="KPI">
-          No Data Found
-        </SectionCard>
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-        {/* Priority Section */}
-        <SectionCard badge="Priority">
-          No Data Found
-        </SectionCard>
+        {/* KPI overview cards */}
+        {(kpiLoading || kpis.length > 0) && (
+          <div>
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">KPI Overview</p>
+            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
+              {kpiLoading
+                ? [1, 2, 3, 4].map(i => (
+                    <div key={i} className="bg-white border border-gray-200 rounded-xl px-4 py-3 animate-pulse">
+                      <div className="h-2 bg-gray-100 rounded w-3/4 mb-3" />
+                      <div className="h-4 bg-gray-100 rounded w-1/2 mb-2" />
+                      <div className="h-1.5 bg-gray-100 rounded w-full" />
+                    </div>
+                  ))
+                : kpis.map(k => <KPICard key={k.id} kpi={k} />)
+              }
+            </div>
+          </div>
+        )}
 
-        {/* WWW Section */}
-        <SectionCard
-          badge="WWW"
-          rightContent={
-            <SelectDropdown
-              value={wwwFilter}
-              onChange={setWwwFilter}
-              options={["Not Applicable, Be...", "Applicable", "All"]}
-              className="text-xs"
-            />
-          }
-        >
-          No Data Found
-        </SectionCard>
+        <Section badge="KPI" count={kpis.length}>
+          {kpiLoading ? <Spinner /> : <KPISection kpis={kpis} year={year} quarter={quarter} />}
+        </Section>
+
+        <Section badge="Priority" count={priorities.length}>
+          {priLoading ? <Spinner /> : <PrioritySection priorities={priorities} year={year} quarter={quarter} />}
+        </Section>
+
+        <Section badge="WWW" count={wwwItems.length}>
+          {wwwLoading ? <Spinner /> : <WWWSection items={wwwItems} />}
+        </Section>
+
       </div>
     </div>
   );

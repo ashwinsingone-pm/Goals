@@ -56,3 +56,11 @@ prisma/*.sqlite
 # OS
 Thumbs.db
 .DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+goals.json
+*.egg-info/
+dist/
+build/
+.env
