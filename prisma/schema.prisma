@@ -40,6 +40,7 @@ model Tenant {
   kpis                KPI[]
   priorities          Priority[]
   wwwItems            WWWItem[]
+  categoryMasters     CategoryMaster[]
   meetings            Meeting[]
   meetingTemplates    MeetingTemplate[]
   opspDocuments       OPSPDocument[]
@@ -431,6 +432,29 @@ model WWWRevisionLog {
 
   @@index([wwwItemId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// CATEGORY MASTER
+// ============================================================================
+
+model CategoryMaster {
+  id          String   @id @default(cuid())
+  tenantId    String
+
+  name        String
+  dataType    String   // "Number" | "Percentage" | "Currency"
+  currency    String?  // e.g. "INR", "USD" — only when dataType = "Currency"
+  description String?  @db.Text
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([dataType])
 }
 
 // ============================================================================
