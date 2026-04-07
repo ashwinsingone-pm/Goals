@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useUsers } from "@/lib/hooks/useUsers";
+import { CURRENCIES } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 import {
   ChevronDown, Info, Maximize2, Eye, Check,
   Copy, Undo2, Redo2, Bold, Italic, Underline,
   Strikethrough, List, ListOrdered, Quote,
-  AlignLeft, Calendar, X, Loader2,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  Calendar, X, Loader2, Printer,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════
@@ -90,47 +93,136 @@ function FTextarea({
 }
 
 /* ── Toolbar button ── */
-function TBtn({ icon, onMouseDown }: { icon: React.ReactNode; onMouseDown?: (e: React.MouseEvent) => void }) {
+function TBtn({
+  icon, onMouseDown, active = false, title,
+}: { icon: React.ReactNode; onMouseDown?: (e: React.MouseEvent) => void; active?: boolean; title?: string }) {
   return (
     <button
       type="button"
-      className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 rounded text-gray-600"
+      title={title}
+      className={cn(
+        "h-6 w-6 flex items-center justify-center rounded transition-colors",
+        active ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100",
+      )}
       onMouseDown={onMouseDown}
     >
       {icon}
     </button>
   );
 }
-function Sep() { return <span className="w-px h-4 bg-gray-200 mx-0.5" />; }
+function Sep() { return <span className="w-px h-4 bg-gray-200 mx-0.5 flex-shrink-0" />; }
 
-/* ── Rich Toolbar (functional with execCommand) ── */
-function RichToolbar({ editorRef }: { editorRef?: React.RefObject<HTMLDivElement> }) {
-  const exec = (cmd: string, val?: string) => {
-    if (editorRef?.current) editorRef.current.focus();
+const ALIGN_OPTIONS: { label: string; cmd: string; Icon: React.FC<{ className?: string }> }[] = [
+  { label: "Left",    cmd: "justifyLeft",   Icon: AlignLeft },
+  { label: "Center",  cmd: "justifyCenter", Icon: AlignCenter },
+  { label: "Right",   cmd: "justifyRight",  Icon: AlignRight },
+  { label: "Justify", cmd: "justifyFull",   Icon: AlignJustify },
+];
+
+/* ── Rich Toolbar ── */
+function RichToolbar({ editorRef }: { editorRef: React.RefObject<HTMLDivElement> }) {
+  const [states, setStates] = useState({
+    bold: false, italic: false, underline: false, strikeThrough: false,
+    insertUnorderedList: false, insertOrderedList: false,
+    justifyLeft: true, justifyCenter: false, justifyRight: false, justifyFull: false,
+  });
+  const [alignOpen, setAlignOpen] = useState(false);
+
+  // Poll active formatting states whenever selection changes
+  const syncStates = useCallback(() => {
+    try {
+      setStates({
+        bold:                 document.queryCommandState("bold"),
+        italic:               document.queryCommandState("italic"),
+        underline:            document.queryCommandState("underline"),
+        strikeThrough:        document.queryCommandState("strikeThrough"),
+        insertUnorderedList:  document.queryCommandState("insertUnorderedList"),
+        insertOrderedList:    document.queryCommandState("insertOrderedList"),
+        justifyLeft:          document.queryCommandState("justifyLeft"),
+        justifyCenter:        document.queryCommandState("justifyCenter"),
+        justifyRight:         document.queryCommandState("justifyRight"),
+        justifyFull:          document.queryCommandState("justifyFull"),
+      });
+    } catch { /* ignore in SSR/unsupported */ }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", syncStates);
+    return () => document.removeEventListener("selectionchange", syncStates);
+  }, [syncStates]);
+
+  const exec = useCallback((cmd: string, val?: string) => {
+    // Keep focus in editor, run command, then re-sync toolbar state
+    if (editorRef.current) editorRef.current.focus();
     document.execCommand(cmd, false, val ?? undefined);
-  };
+    // Use rAF so the browser updates queryCommandState before we read it
+    requestAnimationFrame(syncStates);
+  }, [editorRef, syncStates]);
+
+  const currentAlignIcon = ALIGN_OPTIONS.find(a => states[a.cmd as keyof typeof states])?.Icon ?? AlignLeft;
+  const CurrentAlignIcon = currentAlignIcon;
+
   return (
-    <div className="flex items-center gap-0.5 border-b border-gray-200 pb-1.5 mb-2 flex-wrap">
-      <TBtn icon={<Undo2 className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("undo"); }} />
-      <TBtn icon={<Redo2 className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("redo"); }} />
+    <div className="flex items-center gap-0.5 border-b border-gray-200 pb-1.5 mb-2 overflow-x-auto flex-nowrap scrollbar-none">
+      {/* Undo */}
+      <TBtn title="Undo (Ctrl+Z)" icon={<Undo2 className="h-3.5 w-3.5" />}
+        onMouseDown={e => { e.preventDefault(); exec("undo"); }} />
+      {/* Redo */}
+      <TBtn title="Redo (Ctrl+Y)" icon={<Redo2 className="h-3.5 w-3.5" />}
+        onMouseDown={e => { e.preventDefault(); exec("redo"); }} />
       <Sep />
-      <button
-        type="button"
-        className="flex items-center gap-0.5 h-6 px-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-        onMouseDown={e => { e.preventDefault(); }}
-      >
-        <AlignLeft className="h-3 w-3" /><ChevronDown className="h-3 w-3" />
-      </button>
+
+      {/* Alignment dropdown */}
+      <div className="relative">
+        <button
+          type="button"
+          title="Text alignment"
+          className="flex items-center gap-0.5 h-6 px-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+          onMouseDown={e => { e.preventDefault(); setAlignOpen(o => !o); }}
+        >
+          <CurrentAlignIcon className="h-3 w-3" />
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {alignOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onMouseDown={() => setAlignOpen(false)} />
+            <div className="absolute top-full left-0 z-40 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[110px]">
+              {ALIGN_OPTIONS.map(({ label, cmd, Icon }) => (
+                <button key={cmd} type="button"
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50",
+                    states[cmd as keyof typeof states] ? "text-blue-600 font-semibold" : "text-gray-700",
+                  )}
+                  onMouseDown={e => { e.preventDefault(); exec(cmd); setAlignOpen(false); }}>
+                  <Icon className="h-3.5 w-3.5" /> {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <Sep />
-      <TBtn icon={<Bold className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("bold"); }} />
-      <TBtn icon={<Italic className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("italic"); }} />
-      <TBtn icon={<Underline className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("underline"); }} />
-      <TBtn icon={<Strikethrough className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("strikeThrough"); }} />
+
+      {/* Inline formatting */}
+      <TBtn title="Bold (Ctrl+B)"        active={states.bold}          icon={<Bold         className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("bold"); }} />
+      <TBtn title="Italic (Ctrl+I)"      active={states.italic}        icon={<Italic       className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("italic"); }} />
+      <TBtn title="Underline (Ctrl+U)"   active={states.underline}     icon={<Underline    className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("underline"); }} />
+      <TBtn title="Strikethrough"        active={states.strikeThrough} icon={<Strikethrough className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("strikeThrough"); }} />
       <Sep />
-      <TBtn icon={<List className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} />
-      <TBtn icon={<ListOrdered className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("insertOrderedList"); }} />
+
+      {/* Lists */}
+      <TBtn title="Bullet list"   active={states.insertUnorderedList} icon={<List        className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} />
+      <TBtn title="Numbered list" active={states.insertOrderedList}   icon={<ListOrdered className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("insertOrderedList"); }} />
       <Sep />
-      <TBtn icon={<Quote className="h-3.5 w-3.5" />} onMouseDown={e => { e.preventDefault(); exec("formatBlock", "blockquote"); }} />
+
+      {/* Blockquote */}
+      <TBtn title="Block quote" icon={<Quote className="h-3.5 w-3.5" />}
+        onMouseDown={e => {
+          e.preventDefault();
+          // Toggle: queryCommandValue returns current block tag
+          const current = document.queryCommandValue("formatBlock").toLowerCase();
+          exec("formatBlock", current === "blockquote" ? "p" : "blockquote");
+        }} />
     </div>
   );
 }
@@ -142,7 +234,7 @@ function RichEditor({
   const editorRef = useRef<HTMLDivElement>(null);
   const [isEmpty, setIsEmpty] = useState(!value || value === "" || value === "<br>");
 
-  // Re-sync innerHTML when resetKey changes (e.g. quarter/year switch) or on first mount
+  // Sync innerHTML when resetKey changes (quarter/year switch) or first mount
   useEffect(() => {
     if (editorRef.current) {
       editorRef.current.innerHTML = value || "";
@@ -155,7 +247,7 @@ function RichEditor({
     if (!editorRef.current) return;
     const html = editorRef.current.innerHTML;
     onChange(html);
-    setIsEmpty(!html || html === "" || html === "<br>");
+    setIsEmpty(!html || html === "<br>" || html === "<div><br></div>");
   };
 
   return (
@@ -173,7 +265,7 @@ function RichEditor({
           suppressContentEditableWarning
           onInput={handleInput}
           style={{ minHeight: "inherit" }}
-          className="w-full h-full border border-gray-200 rounded px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white overflow-y-auto"
+          className="rich-editor w-full h-full border border-gray-200 rounded px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white overflow-y-auto"
         />
       </div>
     </div>
@@ -223,28 +315,211 @@ function CritBlock({ label, value, onChange }: { label: string; value: CritCard;
   );
 }
 
+const DATA_TYPES = ["Number", "Percentage", "Currency"] as const;
+
+/* ── Module-level cache: category name → { dataType, symbol } ── */
+interface CatMeta { dataType: string; symbol: string | null; }
+const catMetaCache = new Map<string, CatMeta>();
+
+function populateCatCache(data: { name: string; dataType: string; currency: string | null }[]) {
+  data.forEach(c => {
+    const symbol = c.dataType === "Currency"
+      ? (CURRENCIES.find(x => x.code === c.currency)?.symbol ?? null)
+      : null;
+    catMetaCache.set(c.name, { dataType: c.dataType, symbol });
+  });
+}
+
+/* ── CategorySelect ── */
+interface CatFull { name: string; dataType: string; currency: string | null; }
+
 function CategorySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const CATS = ["Revenue","Profit","Customers","Employees","Retention","Satisfaction","Growth","Other"];
   const [open, setOpen] = useState(false);
+  const [cats, setCats] = useState<CatFull[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState("Number");
+  const [newCurrency, setNewCurrency] = useState("NONE");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function fetchCats() {
+    fetch("/api/categories")
+      .then(r => r.json())
+      .then(j => {
+        if (j.success) {
+          const full = j.data as CatFull[];
+          setCats(full);
+          populateCatCache(full);
+        }
+      })
+      .catch(() => {});
+  }
+
+  useEffect(() => { if (open) fetchCats(); }, [open]);
+
+  const catNames = cats.map(c => c.name);
+  const allCats: CatFull[] = catNames.includes(value) || !value
+    ? cats
+    : [...cats, { name: value, dataType: "Number", currency: null }];
+
+  function resetForm() { setAdding(false); setNewName(""); setNewType("Number"); setNewCurrency("NONE"); setError(""); }
+
+  async function commitNew() {
+    const trimmed = newName.trim();
+    if (!trimmed) { setError("Name is required"); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          dataType: newType,
+          currency: newType === "Currency" ? newCurrency : null,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) { fetchCats(); onChange(trimmed); setOpen(false); resetForm(); }
+      else setError(json.error || "Failed to save");
+    } finally { setSaving(false); }
+  }
+
   return (
     <div className="relative w-full min-w-0">
       <button onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between border border-gray-200 rounded px-2 py-1.5 text-sm bg-white hover:bg-gray-50">
-        <span className={cn("min-w-0 flex-1 truncate", value ? "text-gray-700" : "text-gray-400")}>{value || "Select Category"}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+        className="w-full flex items-start justify-between border border-gray-200 rounded px-2 py-1.5 bg-white hover:bg-gray-50 gap-1">
+        <span className={cn("flex-1 text-sm whitespace-normal break-words text-left leading-snug", value ? "text-gray-700" : "text-gray-400")}>
+          {value || "Select Category"}
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute top-full mt-1 left-0 z-20 bg-white border border-gray-200 rounded-lg shadow-lg w-44 py-1">
-            {CATS.map(c => (
-              <button key={c} onClick={() => { onChange(c); setOpen(false); }}
-                className={cn("w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50", value === c && "text-blue-600 font-medium")}>
-                {c}
-              </button>
-            ))}
+          <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); resetForm(); }} />
+          <div className="absolute top-full mt-1 left-0 z-20 bg-white border border-gray-200 rounded-lg shadow-lg w-56 py-1">
+            {/* Existing categories list */}
+            <div className="max-h-40 overflow-y-auto">
+              {allCats.length === 0 && !adding && (
+                <p className="px-3 py-2 text-xs text-gray-400">No categories yet.</p>
+              )}
+              {allCats.map(c => (
+                <button key={c.name} onClick={() => { onChange(c.name); setOpen(false); }}
+                  className={cn("w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 whitespace-normal break-words leading-snug", value === c.name && "text-blue-600 font-medium")}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Add new form */}
+            <div className="border-t border-gray-100 mt-1 pt-1">
+              {adding ? (
+                <div className="px-3 py-2 space-y-2">
+                  {/* Name */}
+                  <input
+                    ref={inputRef}
+                    autoFocus
+                    value={newName}
+                    onChange={e => { setNewName(e.target.value); setError(""); }}
+                    onKeyDown={e => { if (e.key === "Escape") resetForm(); }}
+                    placeholder="Category name *"
+                    disabled={saving}
+                    className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+                  />
+                  {/* Data Type */}
+                  <select
+                    value={newType}
+                    onChange={e => { setNewType(e.target.value); setNewCurrency("NONE"); }}
+                    disabled={saving}
+                    className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50">
+                    {DATA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {/* Currency — only if Currency type */}
+                  {newType === "Currency" && (
+                    <select
+                      value={newCurrency}
+                      onChange={e => setNewCurrency(e.target.value)}
+                      disabled={saving}
+                      className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50">
+                      <option value="NONE">None</option>
+                      {CURRENCIES.map(c => (
+                        <option key={c.code} value={c.code}>{c.symbol} {c.code} — {c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {error && <p className="text-red-500 text-xs">{error}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={resetForm} disabled={saving}
+                      className="flex-1 text-xs border border-gray-200 rounded py-1 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                      Cancel
+                    </button>
+                    <button onClick={commitNew} disabled={saving || !newName.trim()}
+                      className="flex-1 text-xs bg-gray-900 text-white rounded py-1 font-medium hover:bg-gray-800 disabled:opacity-50">
+                      {saving ? "Saving…" : "Add"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={e => { e.stopPropagation(); setAdding(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+                  className="w-full text-left px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 font-medium flex items-center gap-1.5">
+                  <span className="text-base leading-none">+</span> Add new category
+                </button>
+              )}
+            </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/* ── ProjectedInput — currency prefix · percentage postfix · right-aligned number ── */
+function ProjectedInput({
+  value, onChange, categoryName, placeholder, className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  categoryName: string;
+  placeholder?: string;
+  className?: string;
+}) {
+  const meta        = catMetaCache.get(categoryName);
+  const isCurrency  = meta?.dataType === "Currency";
+  const isPct       = meta?.dataType === "Percentage";
+  const symbol      = meta?.symbol ?? null;
+  const filled      = value.trim() !== "";
+
+  return (
+    <div className={cn(
+      "flex items-center border border-gray-200 rounded bg-white focus-within:ring-1 focus-within:ring-blue-400 overflow-hidden",
+      className,
+    )}>
+      {/* Currency prefix */}
+      {isCurrency && symbol && (
+        <span className="pl-2 pr-0.5 text-gray-500 font-semibold text-sm flex-shrink-0 select-none">
+          {symbol}
+        </span>
+      )}
+
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder ?? (isPct ? "0" : isCurrency ? "0" : "Num")}
+        className={cn(
+          "flex-1 min-w-0 w-0 bg-transparent focus:outline-none placeholder-gray-400 text-right",
+          isCurrency && symbol ? "pl-0.5 pr-1 py-1.5" : isPct ? "pl-2 pr-1 py-1.5" : "px-2 py-1.5",
+          filled ? "text-base font-semibold text-gray-800" : "text-sm text-gray-700",
+        )}
+      />
+
+      {/* Percentage postfix */}
+      {isPct && (
+        <span className="pr-2 pl-0.5 text-gray-500 font-semibold text-sm flex-shrink-0 select-none">
+          %
+        </span>
       )}
     </div>
   );
@@ -270,26 +545,62 @@ function WithTooltip({ content, children, className = "relative min-w-0" }: { co
 }
 
 /* ── Owner selector ── */
-const OWNER_OPTIONS = ["CEO","COO","CFO","CTO","CMO","VP Sales","VP Ops","VP Eng","HR Lead","Team Lead","Other"];
 function OwnerSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const { data: users = [] } = useUsers();
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return users.filter(u =>
+      `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q)
+    );
+  }, [users, search]);
+
+  const label = useMemo(() => {
+    if (!value) return null;
+    const u = users.find(u => u.id === value);
+    return u ? `${u.firstName} ${u.lastName}` : value;
+  }, [users, value]);
+
   return (
     <div className="relative w-full min-w-0">
-      <button onClick={() => setOpen(o => !o)}
+      <button onClick={() => { setOpen(o => !o); setSearch(""); }}
         className="w-full flex items-center justify-between border border-gray-200 rounded px-2 py-1.5 text-sm bg-white hover:bg-gray-50">
-        <span className={cn("min-w-0 flex-1 truncate", value ? "text-gray-700" : "text-gray-400")}>{value || "Select Owner"}</span>
+        <span className={cn("min-w-0 flex-1 truncate", label ? "text-gray-700" : "text-gray-400")}>
+          {label || "Owner"}
+        </span>
         <ChevronDown className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute top-full mt-1 left-0 z-20 bg-white border border-gray-200 rounded-lg shadow-lg w-44 py-1 max-h-52 overflow-y-auto">
-            {OWNER_OPTIONS.map(o => (
-              <button key={o} onClick={() => { onChange(o); setOpen(false); }}
-                className={cn("w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50", value === o && "text-blue-600 font-medium")}>
-                {o}
-              </button>
-            ))}
+          <div className="absolute top-full mt-1 left-0 z-20 bg-white border border-gray-200 rounded-lg shadow-lg w-52 py-1">
+            <div className="px-2 pb-1 pt-1">
+              <input
+                autoFocus
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search…"
+                className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+            <div className="max-h-44 overflow-y-auto">
+              {filtered.length === 0 && (
+                <p className="px-3 py-2 text-xs text-gray-400">No users found.</p>
+              )}
+              {filtered.map(u => {
+                const fullName = `${u.firstName} ${u.lastName}`;
+                return (
+                  <button key={u.id} onClick={() => { onChange(u.id); setOpen(false); }}
+                    className={cn("w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50", value === u.id && "text-blue-600 font-medium")}>
+                    <span className="block truncate">{fullName}</span>
+                    <span className="block text-[10px] text-gray-400 truncate">{u.email}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </>
       )}
@@ -364,13 +675,13 @@ function TargetsModal({ open, onClose, rows, onChange, targetYears }: {
           </div>
           {/* Rows */}
           {rows.map((row, i) => (
-            <div key={i} style={gridStyle} className="items-center py-2 border-b border-gray-100">
+            <div key={i} style={gridStyle} className="items-start py-2 border-b border-gray-100">
               <CategorySelect value={row.category} onChange={v => {
                 const next = [...rows]; next[i] = { ...next[i], category: v }; onChange(next);
               }} />
-              <FInput value={row.projected} onChange={v => {
+              <ProjectedInput categoryName={row.category} value={row.projected} onChange={v => {
                 const next = [...rows]; next[i] = { ...next[i], projected: v }; onChange(next);
-              }} placeholder="Number" />
+              }} />
               {keys.map(k => (
                 <FInput key={k} value={String(row[k] ?? "")} onChange={v => {
                   const next = [...rows]; (next[i] as any)[k] = v; onChange(next);
@@ -416,13 +727,13 @@ function GoalsModal({ open, onClose, rows, onChange }: {
             {["Quarter 1","Quarter 2","Quarter 3","Quarter 4"].map(q => <span key={q}>{q}</span>)}
           </div>
           {rows.map((row, i) => (
-            <div key={i} style={{ display:"grid", gap:"12px", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr" }} className="items-center py-2 border-b border-gray-100">
+            <div key={i} style={{ display:"grid", gap:"12px", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr" }} className="items-start py-2 border-b border-gray-100">
               <CategorySelect value={row.category} onChange={v => {
                 const next = [...rows]; next[i] = { ...next[i], category: v }; onChange(next);
               }} />
-              <FInput value={row.projected} onChange={v => {
+              <ProjectedInput categoryName={row.category} value={row.projected} onChange={v => {
                 const next = [...rows]; next[i] = { ...next[i], projected: v }; onChange(next);
-              }} placeholder="Number" />
+              }} />
               {qCols.map(k => (
                 <FInput key={k} value={row[k]} onChange={v => {
                   const next = [...rows]; next[i] = { ...next[i], [k]: v }; onChange(next);
@@ -443,6 +754,399 @@ function GoalsModal({ open, onClose, rows, onChange }: {
 }
 
 /* ═══════════════════════════════════════════════
+   OPSP Preview Modal
+═══════════════════════════════════════════════ */
+function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => void; form: FormData }) {
+  if (!open) return null;
+
+  const critColors = ["bg-green-500", "bg-yellow-400", "bg-orange-400", "bg-red-500"];
+
+  function CritSection({ crit, label }: { crit: CritCard; label?: string }) {
+    return (
+      <div>
+        <div className="text-[9px] font-bold uppercase mb-0.5">
+          Critical #:{label ? <span className="font-normal text-gray-500"> {label}</span> : null}
+          {crit.title ? <span className="font-normal text-gray-700"> {crit.title}</span> : null}
+        </div>
+        <div className="flex flex-col gap-0.5">
+          {crit.bullets.map((b, i) => (
+            <div key={i} className="flex items-center gap-1 text-[9px]">
+              <span className={`w-2 h-2 rounded-sm flex-shrink-0 ${critColors[i]}`} />
+              <span className="text-gray-600 leading-none">{b || "\u00a0"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function fmtDue(d: string) {
+    if (!d) return "";
+    try { return new Date(d + "T00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" }); } catch { return d; }
+  }
+
+  const td = "border border-gray-300 px-1.5 py-1 align-top text-[9px] leading-snug";
+  const thBold = "text-center font-bold uppercase text-[9px]";
+  const sub = "italic text-gray-500 text-center text-[8px]";
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col bg-black/70">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-5 py-2.5 bg-gray-900 text-white flex-shrink-0">
+        <span className="text-sm font-medium tracking-wide">OPSP Preview — {form.year} {form.quarter}</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition-colors"
+          >
+            <Printer className="h-3.5 w-3.5" /> Print
+          </button>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Scrollable pages */}
+      <div className="flex-1 overflow-y-auto bg-gray-300 py-8 px-4">
+        <div className="max-w-[900px] mx-auto space-y-8" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
+
+          {/* ══ Page 1: PEOPLE (S3) ══ */}
+          <div className="bg-white shadow-xl">
+
+            {/* Page header */}
+            <div className="flex border-b-[3px] border-blue-700">
+              <div className="flex-1 px-3 py-1.5">
+                <span className="text-sm font-bold text-blue-700">Strategy: </span>
+                <span className="text-xs">One-Page Strategic Plan (OPSP)</span>
+              </div>
+              <div className="border-l border-gray-300 px-3 py-1.5 flex items-center gap-1 text-[10px]">
+                <span className="font-semibold">Organization:</span>
+              </div>
+            </div>
+
+            <div className="px-3 pb-3 pt-2">
+              {/* People title */}
+              <div className="text-center text-[11px] font-bold mb-2">
+                <span className="text-blue-700">People</span>
+                <span className="font-normal italic text-gray-500"> (Reputation Drivers)</span>
+              </div>
+
+              {/* Employees / Customers / Shareholders */}
+              <table className="w-full mb-2 border-collapse border border-gray-300 text-[9px]">
+                <tbody>
+                  {[0, 1, 2].map(i => (
+                    <tr key={i}>
+                      {(["employees", "customers", "shareholders"] as const).map((key, ci) => (
+                        <td key={key} className={cn("px-2 py-0.5 border border-gray-300 w-1/3", i === 0 && "pt-1")}>
+                          {i === 0 && (
+                            <div className="font-bold uppercase text-[8px] text-center mb-0.5">
+                              {["Employees", "Customers", "Shareholders"][ci]}
+                            </div>
+                          )}
+                          <div className="flex items-baseline gap-1 border-b border-gray-200 min-h-[13px]">
+                            <span className="text-gray-400">{i + 1}.</span>
+                            <span className="text-gray-700">{(form[key] as string[])[i]}</span>
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 4-col main section */}
+              <table className="w-full border-collapse text-[9px] mb-2" style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "22%" }} />
+                  <col style={{ width: "26%" }} />
+                  <col style={{ width: "26%" }} />
+                  <col style={{ width: "26%" }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th className={cn(td, thBold)}>Core Values/Beliefs<br /><span className={sub}>(Should/Shouldn&apos;t)</span></th>
+                    <th className={cn(td, thBold)}>Purpose<br /><span className={sub}>(Why)</span></th>
+                    <th className={cn(td, thBold)}>Targets (3–5 Yrs.)<br /><span className={sub}>(Where)</span></th>
+                    <th className={cn(td, thBold)}>Goals (1 Yr.)<br /><span className={sub}>(What)</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {/* Core Values */}
+                    <td className={td}>
+                      <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.coreValues || "<span class='text-gray-300'>—</span>" }} />
+                    </td>
+
+                    {/* Purpose */}
+                    <td className={td}>
+                      <div className="prose-preview mb-1" dangerouslySetInnerHTML={{ __html: form.purpose || "" }} />
+                      <div className="border-t border-gray-200 pt-1">
+                        <div className="font-bold uppercase text-[8px]">Actions</div>
+                        <div className="italic text-gray-400 text-[8px]">To Live Values, Purposes, BHAG</div>
+                        {form.actions.map((v, i) => (
+                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                            <span>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <span className="font-bold">Profit per X: </span>{form.profitPerX}
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px]">BHAG®</div>
+                        <div>{form.bhag}</div>
+                      </div>
+                    </td>
+
+                    {/* Targets */}
+                    <td className={td}>
+                      {form.targetRows.slice(0, 5).map((row, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                          <span className="flex-1 truncate">{row.category}</span>
+                          <span className="text-gray-700 ml-1">{row.projected}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Sandbox</div>
+                        <div className="text-gray-600">{form.sandbox}</div>
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px]">Key Thrusts/Capabilities</div>
+                        <div className="italic text-gray-400 text-[8px]">3–5 Year Priorities</div>
+                        {form.keyThrusts.map((row, i) => (
+                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                            <span className="flex-1 truncate">{row.desc}</span>
+                            <span className="text-gray-400 text-[8px]">{row.owner}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Brand Promise KPIs</div>
+                        <div className="text-gray-600">{form.brandPromiseKPIs}</div>
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Brand Promise</div>
+                        <div className="text-gray-600">{form.brandPromise}</div>
+                      </div>
+                    </td>
+
+                    {/* Goals */}
+                    <td className={td}>
+                      {form.goalRows.slice(0, 6).map((row, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                          <span className="flex-1 truncate">{row.category}</span>
+                          <span className="text-gray-700 ml-1">{row.projected}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px]">Key Initiatives</div>
+                        <div className="italic text-gray-400 text-[8px]">1 Year Priorities</div>
+                        <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.keyInitiatives || "" }} />
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.criticalNumGoals} label="People or B/S" />
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.balancingCritNumGoals} label="Process or P/L" />
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Strengths / Weaknesses */}
+              <table className="w-full border-collapse border border-gray-300 text-[9px]">
+                <tbody>
+                  <tr>
+                    <td className="w-1/2 border-r border-gray-300 px-2 py-1">
+                      <div className="font-bold text-[9px] mb-1">Strengths/Core Competencies</div>
+                      {form.processItems.map((v, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
+                          <span className="text-gray-400">{i + 1}.</span><span>{v}</span>
+                        </div>
+                      ))}
+                    </td>
+                    <td className="w-1/2 px-2 py-1">
+                      <div className="font-bold text-[9px] mb-1">Weaknesses:</div>
+                      {form.weaknesses.map((v, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
+                          <span className="text-gray-400">{i + 1}.</span><span>{v}</span>
+                        </div>
+                      ))}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ══ Page 2: PROCESS (S4) ══ */}
+          <div className="bg-white shadow-xl">
+            <div className="px-3 pb-3 pt-2" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
+              {/* Process title */}
+              <div className="text-center text-[11px] font-bold mb-2">
+                <span className="text-blue-700">Process</span>
+                <span className="font-normal italic text-gray-500"> (Productivity Drivers)</span>
+              </div>
+
+              {/* Make/Buy / Sell / Record Keeping */}
+              <table className="w-full mb-2 border-collapse border border-gray-300 text-[9px]">
+                <tbody>
+                  {[0, 1, 2].map(i => (
+                    <tr key={i}>
+                      {(["makeBuy", "sell", "recordKeeping"] as const).map((key, ci) => (
+                        <td key={key} className={cn("px-2 py-0.5 border border-gray-300 w-1/3", i === 0 && "pt-1")}>
+                          {i === 0 && (
+                            <div className="font-bold uppercase text-[8px] text-center mb-0.5">
+                              {["Make/Buy", "Sell", "Record Keeping"][ci]}
+                            </div>
+                          )}
+                          <div className="flex items-baseline gap-1 border-b border-gray-200 min-h-[13px]">
+                            <span className="text-gray-400">{i + 1}.</span>
+                            <span className="text-gray-700">{(form[key] as string[])[i]}</span>
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 3-col process section */}
+              <table className="w-full border-collapse text-[9px] mb-2" style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "33.3%" }} />
+                  <col style={{ width: "33.3%" }} />
+                  <col style={{ width: "33.3%" }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th className={cn(td, thBold)}>Actions (QTR)<br /><span className={sub}>(How)</span></th>
+                    <th className={cn(td, thBold)}>Theme<br /><span className={sub}>(QTR/ANNUAL)</span></th>
+                    <th className={cn(td, thBold)}>Your Accountability<br /><span className={sub}>(Who/When)</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {/* Actions QTR */}
+                    <td className={td}>
+                      {form.actionsQtr.map((row, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                          <span className="flex-1 truncate text-gray-700">{row.category}</span>
+                          <span className="text-gray-700 ml-1">{row.projected}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px]">Rocks</div>
+                        <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.rocks || "" }} />
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="flex justify-between font-bold text-[8px] mb-0.5">
+                          <span>Quarterly Priorities</span><span className="text-gray-400">Due</span>
+                        </div>
+                        {form.quarterlyPriorities.map((row, i) => (
+                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                            <span className="flex-1">{row.priority}</span>
+                            <span className="text-gray-400 text-[8px] flex-shrink-0">{fmtDue(row.dueDate)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.criticalNumProcess} label="People or B/S" />
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.balancingCritNumProcess} label="Process or P/L" />
+                      </div>
+                    </td>
+
+                    {/* Theme */}
+                    <td className={td}>
+                      <div className="text-gray-700">{form.theme}</div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Scoreboard Design</div>
+                        <div className="italic text-gray-400 text-[8px]">Describe and/or sketch your design in this space</div>
+                        <div className="text-gray-700">{form.scoreboardDesign}</div>
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Celebration</div>
+                        <div className="text-gray-700">{form.celebration}</div>
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Reward</div>
+                        <div className="text-gray-700">{form.reward}</div>
+                      </div>
+                    </td>
+
+                    {/* YOUR ACCOUNTABILITY */}
+                    <td className={td}>
+                      <div className="flex justify-between font-bold text-[8px] mb-0.5">
+                        <span>Your KPIs</span><span className="text-gray-400">Goal</span>
+                      </div>
+                      {form.kpiAccountability.map((row, i) => (
+                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                          <span className="flex-1">{row.kpi}</span>
+                          <span className="text-gray-600 ml-1">{row.goal}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <div className="flex justify-between font-bold text-[8px] mb-0.5">
+                          <span>Your Quarterly Priorities</span><span className="text-gray-400">Due</span>
+                        </div>
+                        {form.quarterlyPriorities.map((row, i) => (
+                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
+                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
+                            <span className="flex-1">{row.priority}</span>
+                            <span className="text-gray-400 text-[8px] flex-shrink-0">{fmtDue(row.dueDate)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.criticalNumAcct} label="People or B/S" />
+                      </div>
+                      <div className="border-t border-gray-200 pt-1 mt-1">
+                        <CritSection crit={form.balancingCritNumAcct} label="Process or P/L" />
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Trends */}
+              <div className="border border-gray-300 px-2 py-1 text-[9px]">
+                <div className="font-bold text-[9px] mb-1">Trends</div>
+                <div className="grid grid-cols-2 gap-x-6">
+                  {[0, 1].map(col => (
+                    <div key={col}>
+                      {[0, 1, 2].map(row => {
+                        const idx = col * 3 + row;
+                        return (
+                          <div key={idx} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
+                            <span className="text-gray-400">{idx + 1}.</span>
+                            <span className="text-gray-700">{form.trends[idx] ?? ""}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
    Main Page
 ═══════════════════════════════════════════════ */
 export default function OPSPPage() {
@@ -451,9 +1155,18 @@ export default function OPSPPage() {
   const [loading, setLoading] = useState(true);
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [goalsOpen, setGoalsOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>|null>(null);
   const isFirstLoad = useRef(true);
   const skipNextSave = useRef(false);
+
+  /* ── Pre-load category meta cache on mount ── */
+  useEffect(() => {
+    fetch("/api/categories")
+      .then(r => r.json())
+      .then(j => { if (j.success) populateCatCache(j.data); })
+      .catch(() => {});
+  }, []);
 
   /* ── Load on mount ── */
   useEffect(() => {
@@ -593,13 +1306,16 @@ export default function OPSPPage() {
             <Check className="h-4 w-4" />
             {form.status === "finalized" ? "Finalized" : "Finalize"}
           </button>
-          <button className="p-1.5 border border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50"><Eye className="h-4 w-4" /></button>
+          <button onClick={() => setPreviewOpen(true)} className="p-1.5 border border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50" title="Preview OPSP"><Eye className="h-4 w-4" /></button>
           <button onClick={() => save(form)}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
             <Maximize2 className="h-3.5 w-3.5" /> Update OPSP
           </button>
         </div>
       </div>
+
+      {/* ── Preview ── */}
+      <OPSPPreview open={previewOpen} onClose={() => setPreviewOpen(false)} form={form} />
 
       {/* ── Modals ── */}
       <TargetsModal open={targetsOpen} onClose={() => setTargetsOpen(false)}
@@ -617,22 +1333,25 @@ export default function OPSPPage() {
           </div>
 
           {/* 3-col people */}
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            {(["employees","customers","shareholders"] as const).map((key, ci) => (
-              <div key={key}>
-                <p className="text-sm font-medium text-gray-700 mb-2 capitalize">{["Employees","Customers","Shareholders"][ci]}</p>
-                <Card className="space-y-2">
-                  {[0,1,2].map(i => <FInput key={i} value={(form[key] as string[])[i]} onChange={v => setArr(key, i, v)} />)}
-                </Card>
-              </div>
-            ))}
+          <div className="overflow-x-auto pb-1">
+            <div className="flex gap-4 mb-4" style={{ minWidth: 720 }}>
+              {(["employees","customers","shareholders"] as const).map((key, ci) => (
+                <div key={key} className="flex-1 min-w-[220px]">
+                  <p className="text-sm font-medium text-gray-700 mb-2 capitalize">{["Employees","Customers","Shareholders"][ci]}</p>
+                  <Card className="space-y-2">
+                    {[0,1,2].map(i => <FInput key={i} value={(form[key] as string[])[i]} onChange={v => setArr(key, i, v)} />)}
+                  </Card>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* 4-col grid */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="overflow-x-auto pb-2">
+          <div className="flex gap-4 items-stretch" style={{ minWidth: 1200 }}>
 
             {/* Core Values */}
-            <Card className="flex flex-col gap-3">
+            <Card className="flex flex-col gap-3 flex-1 min-w-[280px]">
               <CardH title="CORE VALUES/BELIEFS" subtitle="(Should/Shouldn't)" />
               <div className="flex-1 flex flex-col min-h-0">
                 <RichEditor value={form.coreValues} onChange={v => set("coreValues", v)} placeholder="Enter core values..." className="flex-1 min-h-0" resetKey={`${form.year}-${form.quarter}`} />
@@ -640,7 +1359,7 @@ export default function OPSPPage() {
             </Card>
 
             {/* Purpose */}
-            <Card className="flex flex-col gap-3">
+            <Card className="flex flex-col gap-3 flex-1 min-w-[280px]">
               <div>
                 <CardH title="PURPOSE" subtitle="(Why)" />
                 <RichEditor value={form.purpose} onChange={v => set("purpose", v)} placeholder="Enter purpose..." resetKey={`${form.year}-${form.quarter}`} />
@@ -673,7 +1392,7 @@ export default function OPSPPage() {
             </Card>
 
             {/* Targets */}
-            <Card className="flex flex-col gap-3">
+            <Card className="flex flex-col gap-3 flex-1 min-w-[300px]">
               <div>
                 <div className="flex items-start justify-between mb-3">
                   <div>
@@ -686,21 +1405,24 @@ export default function OPSPPage() {
                     <Maximize2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
-                  <span className="flex-1">Category</span><span className="w-16 text-right">Projected</span>
+                <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
+                  <span className="w-[55%]">Category</span><span className="flex-1 text-right">Projected</span>
                 </div>
                 {form.targetRows.slice(0,3).map((row, i) => (
-                  <div key={i} className="flex items-center gap-2 py-0.5">
-                    <WithTooltip content={row.category} className="relative flex-1 min-w-0">
+                  <div key={i} className="flex items-start gap-1.5 py-0.5">
+                    <div className="w-[55%] min-w-0 flex-shrink-0">
                       <CategorySelect value={row.category} onChange={v => {
                         const next = [...form.targetRows]; next[i] = { ...next[i], category: v }; set("targetRows", next);
                       }} />
-                    </WithTooltip>
-                    <WithTooltip content={row.projected} className="relative flex-none">
-                      <FInput className="w-16" value={row.projected} placeholder="Num" onChange={v => {
+                    </div>
+                    <ProjectedInput
+                      className="flex-1 min-w-0"
+                      categoryName={row.category}
+                      value={row.projected}
+                      onChange={v => {
                         const next = [...form.targetRows]; next[i] = { ...next[i], projected: v }; set("targetRows", next);
-                      }} />
-                    </WithTooltip>
+                      }}
+                    />
                   </div>
                 ))}
               </div>
@@ -723,11 +1445,11 @@ export default function OPSPPage() {
                           const next = [...form.keyThrusts]; next[i] = { ...next[i], desc: v }; set("keyThrusts", next);
                         }} />
                       </WithTooltip>
-                      <WithTooltip content={row.owner} className="relative w-20 flex-shrink-0">
-                        <FInput value={row.owner} placeholder="Owner" className="text-xs" onChange={v => {
+                      <div className="relative w-28 flex-shrink-0">
+                        <OwnerSelect value={row.owner} onChange={v => {
                           const next = [...form.keyThrusts]; next[i] = { ...next[i], owner: v }; set("keyThrusts", next);
                         }} />
-                      </WithTooltip>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -746,7 +1468,7 @@ export default function OPSPPage() {
             </Card>
 
             {/* Goals */}
-            <Card className="flex flex-col gap-3">
+            <Card className="flex flex-col gap-3 flex-1 min-w-[300px]">
               <div>
                 <div className="flex items-start justify-between mb-3">
                   <div>
@@ -759,21 +1481,24 @@ export default function OPSPPage() {
                     <Maximize2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
-                  <span className="flex-1">Category</span><span className="w-16 text-right">Projected</span>
+                <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
+                  <span className="w-[55%]">Category</span><span className="flex-1 text-right">Projected</span>
                 </div>
                 {form.goalRows.slice(0,6).map((row, i) => (
-                  <div key={i} className="flex items-center gap-2 py-0.5">
-                    <WithTooltip content={row.category} className="relative flex-1 min-w-0">
+                  <div key={i} className="flex items-start gap-1.5 py-0.5">
+                    <div className="w-[55%] min-w-0 flex-shrink-0">
                       <CategorySelect value={row.category} onChange={v => {
                         const next = [...form.goalRows]; next[i] = { ...next[i], category: v }; set("goalRows", next);
                       }} />
-                    </WithTooltip>
-                    <WithTooltip content={row.projected} className="relative flex-none">
-                      <FInput className="w-16" value={row.projected} placeholder="Num" onChange={v => {
+                    </div>
+                    <ProjectedInput
+                      className="flex-1 min-w-0"
+                      categoryName={row.category}
+                      value={row.projected}
+                      onChange={v => {
                         const next = [...form.goalRows]; next[i] = { ...next[i], projected: v }; set("goalRows", next);
-                      }} />
-                    </WithTooltip>
+                      }}
+                    />
                   </div>
                 ))}
               </div>
@@ -797,6 +1522,7 @@ export default function OPSPPage() {
               </div>
             </Card>
           </div>
+          </div>{/* end overflow-x-auto */}
 
           {/* Process + Weaknesses */}
           <div className="grid grid-cols-2 gap-4 mt-4">
@@ -835,19 +1561,24 @@ export default function OPSPPage() {
             <Card className="space-y-4">
               <div>
                 <CardH title="ACTIONS (QTR)" subtitle="(How)" expand />
-                <div className="flex items-center gap-2 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
-                  <span className="flex-1">Category</span><span className="w-16 text-right">Projected</span>
+                <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium pb-1 border-b border-gray-100 mb-1">
+                  <span className="w-[55%]">Category</span><span className="flex-1 text-right">Projected</span>
                 </div>
                 {form.actionsQtr.map((row, i) => (
-                  <div key={i} className="flex items-center gap-2 py-0.5">
-                    <div className="flex-1 min-w-0">
+                  <div key={i} className="flex items-start gap-1.5 py-0.5">
+                    <div className="w-[55%] min-w-0 flex-shrink-0">
                       <CategorySelect value={row.category} onChange={v => {
                         const next = [...form.actionsQtr]; next[i] = { ...next[i], category: v }; set("actionsQtr", next);
                       }} />
                     </div>
-                    <FInput className="w-16 flex-none" value={row.projected} placeholder="Num" onChange={v => {
-                      const next = [...form.actionsQtr]; next[i] = { ...next[i], projected: v }; set("actionsQtr", next);
-                    }} />
+                    <ProjectedInput
+                      className="flex-1 min-w-0"
+                      categoryName={row.category}
+                      value={row.projected}
+                      onChange={v => {
+                        const next = [...form.actionsQtr]; next[i] = { ...next[i], projected: v }; set("actionsQtr", next);
+                      }}
+                    />
                   </div>
                 ))}
               </div>
@@ -884,42 +1615,112 @@ export default function OPSPPage() {
             </Card>
 
             {/* Your Accountability */}
-            <Card className="space-y-4">
-              <div>
+            <Card className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4">
                 <CardH title="YOUR ACCOUNTABILITY" subtitle="(Who/When)" expand />
-                <div className="text-xs text-gray-500 font-medium grid grid-cols-[28px_1fr_1fr] pb-1 border-b border-gray-100 mb-1">
-                  <span>S.no.</span><span>KPIs</span><span>Goal</span>
+
+                {/* KPI Accountability table */}
+                <div className="rounded-xl border border-gray-200 overflow-hidden">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="border-b border-r border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left w-12">S.no.</th>
+                        <th className="border-b border-r border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left">KPIs</th>
+                        <th className="border-b border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left">Goal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.kpiAccountability.map((row, i) => (
+                        <tr key={i} className="border-b border-gray-200 last:border-b-0">
+                          <td className="border-r border-gray-200 px-3 py-2.5 text-xs text-gray-400 text-center w-12">
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td className="border-r border-gray-200 px-3 py-1.5">
+                            <input
+                              value={row.kpi}
+                              onChange={e => {
+                                const next = [...form.kpiAccountability];
+                                next[i] = { ...next[i], kpi: e.target.value };
+                                set("kpiAccountability", next);
+                              }}
+                              placeholder="Input text"
+                              className="w-full text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none py-1"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              value={row.goal}
+                              onChange={e => {
+                                const next = [...form.kpiAccountability];
+                                next[i] = { ...next[i], goal: e.target.value };
+                                set("kpiAccountability", next);
+                              }}
+                              placeholder="Input text"
+                              className="w-full text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none py-1"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {form.kpiAccountability.map((row, i) => (
-                  <div key={i} className="grid grid-cols-[28px_1fr_1fr] gap-1.5 items-center py-1 border-b border-gray-50">
-                    <span className="text-xs text-gray-400">{String(i+1).padStart(2,"0")}</span>
-                    <FInput value={row.kpi} onChange={v => {
-                      const next = [...form.kpiAccountability]; next[i] = { ...next[i], kpi: v }; set("kpiAccountability", next);
-                    }} />
-                    <FInput value={row.goal} onChange={v => {
-                      const next = [...form.kpiAccountability]; next[i] = { ...next[i], goal: v }; set("kpiAccountability", next);
-                    }} />
-                  </div>
-                ))}
-              </div>
-              <div className="border-t border-gray-100 pt-3">
-                <div className="text-xs text-gray-500 font-medium grid grid-cols-[28px_1fr_80px] pb-1 border-b border-gray-100 mb-1">
-                  <span>S.no.</span><span>Quarterly Priorities</span><span className="text-right">Due</span>
+
+                {/* Quarterly Priorities table */}
+                <div className="rounded-xl border border-gray-200 overflow-hidden">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="border-b border-r border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left w-12">S.no.</th>
+                        <th className="border-b border-r border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left">Quarterly Priorities</th>
+                        <th className="border-b border-gray-200 px-3 py-2.5 text-xs font-semibold text-gray-600 text-left w-32">Due</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.quarterlyPriorities.map((row, i) => (
+                        <tr key={i} className="border-b border-gray-200 last:border-b-0">
+                          <td className="border-r border-gray-200 px-3 py-2.5 text-xs text-gray-400 text-center w-12">
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td className="border-r border-gray-200 px-3 py-1.5">
+                            <input
+                              value={row.priority}
+                              onChange={e => {
+                                const next = [...form.quarterlyPriorities];
+                                next[i] = { ...next[i], priority: e.target.value };
+                                set("quarterlyPriorities", next);
+                              }}
+                              placeholder="Input text"
+                              className="w-full text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none py-1"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 w-32">
+                            <div className="relative flex items-center gap-2 cursor-pointer">
+                              <span className={`flex-1 text-xs truncate ${row.dueDate ? "text-gray-700" : "text-gray-400"}`}>
+                                {row.dueDate
+                                  ? new Date(row.dueDate + "T00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                                  : "Due Date"}
+                              </span>
+                              <Calendar className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                              <input
+                                type="date"
+                                value={row.dueDate}
+                                onChange={e => {
+                                  const next = [...form.quarterlyPriorities];
+                                  next[i] = { ...next[i], dueDate: e.target.value };
+                                  set("quarterlyPriorities", next);
+                                }}
+                                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {form.quarterlyPriorities.map((row, i) => (
-                  <div key={i} className="grid grid-cols-[28px_1fr_80px] gap-1.5 items-center py-1 border-b border-gray-50">
-                    <span className="text-xs text-gray-400">{String(i+1).padStart(2,"0")}</span>
-                    <FInput value={row.priority} onChange={v => {
-                      const next = [...form.quarterlyPriorities]; next[i] = { ...next[i], priority: v }; set("quarterlyPriorities", next);
-                    }} />
-                    <button className="flex items-center justify-between gap-1 w-full border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-50">
-                      <span className="truncate">{row.dueDate || "Due Date"}</span>
-                      <Calendar className="h-3 w-3 flex-shrink-0" />
-                    </button>
-                  </div>
-                ))}
               </div>
-              <div className="border-t border-gray-100 pt-3 space-y-3">
+
+              <div className="border-t border-gray-100 pt-3 space-y-3 mt-auto">
                 <CritBlock label="Critical #" value={form.criticalNumAcct} onChange={v => set("criticalNumAcct", v)} />
                 <CritBlock label="Balancing Critical #" value={form.balancingCritNumAcct} onChange={v => set("balancingCritNumAcct", v)} />
               </div>

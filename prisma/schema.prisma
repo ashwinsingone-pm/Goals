@@ -40,8 +40,11 @@ model Tenant {
   kpis                KPI[]
   priorities          Priority[]
   wwwItems            WWWItem[]
+  categoryMasters     CategoryMaster[]
   meetings            Meeting[]
   meetingTemplates    MeetingTemplate[]
+  dailyHuddles        DailyHuddle[]
+  quarterSettings     QuarterSetting[]
   opspDocuments       OPSPDocument[]
   opppPlans           OPSPPlan[]
   opspData            OPSPData[]
@@ -434,6 +437,29 @@ model WWWRevisionLog {
 }
 
 // ============================================================================
+// CATEGORY MASTER
+// ============================================================================
+
+model CategoryMaster {
+  id          String   @id @default(cuid())
+  tenantId    String
+
+  name        String
+  dataType    String   // "Number" | "Percentage" | "Currency"
+  currency    String?  // e.g. "INR", "USD" — only when dataType = "Currency"
+  description String?  @db.Text
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([dataType])
+}
+
+// ============================================================================
 // MEETING MODULE
 // ============================================================================
 
@@ -530,6 +556,36 @@ model MeetingMetric {
   meeting             Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   @@index([meetingId])
+}
+
+// ============================================================================
+// DAILY HUDDLE
+// ============================================================================
+
+model DailyHuddle {
+  id                      String   @id @default(cuid())
+  tenantId                String
+
+  meetingDate             DateTime
+  callStatus              String   // "Scheduled" | "Held" | "Cancelled" | "Rescheduled"
+  clientName              String?
+  absentMembers           String?
+  actualStartTime         String?  // "HH:MM" 24h
+  actualEndTime           String?  // "HH:MM" 24h
+  yesterdaysAchievements  Boolean  @default(false)
+  stuckIssues             Boolean  @default(false)
+  todaysPriority          Boolean  @default(false)
+  notesKPDashboard        String?  @db.Text
+  otherNotes              String?  @db.Text
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  createdBy               String
+
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([meetingDate])
 }
 
 // ============================================================================
@@ -816,4 +872,27 @@ model FeatureFlag {
 
   @@unique([tenantId, key])
   @@index([tenantId])
+}
+
+// ============================================================================
+// QUARTER SETTINGS
+// ============================================================================
+
+model QuarterSetting {
+  id          String   @id @default(cuid())
+  tenantId    String
+  fiscalYear  Int
+  quarter     String   // Q1 | Q2 | Q3 | Q4
+  startDate   DateTime
+  endDate     DateTime
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, fiscalYear, quarter])
+  @@index([tenantId])
+  @@index([fiscalYear])
 }
