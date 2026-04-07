@@ -43,6 +43,8 @@ model Tenant {
   categoryMasters     CategoryMaster[]
   meetings            Meeting[]
   meetingTemplates    MeetingTemplate[]
+  dailyHuddles        DailyHuddle[]
+  quarterSettings     QuarterSetting[]
   opspDocuments       OPSPDocument[]
   opppPlans           OPSPPlan[]
   opspData            OPSPData[]
@@ -557,6 +559,36 @@ model MeetingMetric {
 }
 
 // ============================================================================
+// DAILY HUDDLE
+// ============================================================================
+
+model DailyHuddle {
+  id                      String   @id @default(cuid())
+  tenantId                String
+
+  meetingDate             DateTime
+  callStatus              String   // "Scheduled" | "Held" | "Cancelled" | "Rescheduled"
+  clientName              String?
+  absentMembers           String?
+  actualStartTime         String?  // "HH:MM" 24h
+  actualEndTime           String?  // "HH:MM" 24h
+  yesterdaysAchievements  Boolean  @default(false)
+  stuckIssues             Boolean  @default(false)
+  todaysPriority          Boolean  @default(false)
+  notesKPDashboard        String?  @db.Text
+  otherNotes              String?  @db.Text
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  createdBy               String
+
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([meetingDate])
+}
+
+// ============================================================================
 // OPSP MODULE (One-Page Strategic Plan)
 // ============================================================================
 
@@ -840,4 +872,27 @@ model FeatureFlag {
 
   @@unique([tenantId, key])
   @@index([tenantId])
+}
+
+// ============================================================================
+// QUARTER SETTINGS
+// ============================================================================
+
+model QuarterSetting {
+  id          String   @id @default(cuid())
+  tenantId    String
+  fiscalYear  Int
+  quarter     String   // Q1 | Q2 | Q3 | Q4
+  startDate   DateTime
+  endDate     DateTime
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, fiscalYear, quarter])
+  @@index([tenantId])
+  @@index([fiscalYear])
 }

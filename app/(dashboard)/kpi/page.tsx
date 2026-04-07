@@ -9,7 +9,8 @@ import {
   getFiscalYear, getFiscalQuarter, fiscalYearLabel,
   getCurrentFiscalWeek, getWeekDateRange,
 } from "@/lib/utils/fiscal";
-import { KPITable, HiddenColsMenu } from "./components/KPITable";
+import { KPITable } from "./components/KPITable";
+import { HiddenColsMenu } from "./components/HiddenColsMenu";
 import { KPIModal } from "./components/KPIModal";
 import { ALL_STATIC_COLS, COL_LABELS } from "./hooks/useTableColumns";
 import { ALL_WEEKS } from "@/lib/utils/fiscal";
