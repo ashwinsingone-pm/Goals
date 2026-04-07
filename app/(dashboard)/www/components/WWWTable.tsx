@@ -17,7 +17,7 @@ const STATUS_OPTIONS = [
 
 function statusBadgeColor(status: string): string {
   const opt = STATUS_OPTIONS.find(o => o.value === status);
-  return opt ? `${opt.color} text-white` : "bg-gray-200 text-gray-600";
+  return opt ? `${opt.color} text-white` : "bg-gray-100 text-gray-400";
 }
 
 function statusLabel(status: string): string {
@@ -430,10 +430,10 @@ export function WWWTable({ items, onRefresh, onSelectionChange }: Props) {
                   </td>
 
                   {/* Status */}
-                  <td className="relative border-r border-gray-100 px-2 py-1.5" style={{ width: 140, minWidth: 140 }}>
+                  <td className={`relative border-r border-gray-100 ${statusBadgeColor(item.status)}`} style={{ width: 140, minWidth: 140 }}>
                     <button
                       onClick={() => { setOpenDatePicker(null); setOpenStatusPicker(isStatusPickerOpen ? null : item.id); }}
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${statusBadgeColor(item.status)}`}
+                      className="w-full h-full flex items-center justify-center px-2 py-3 text-[10px] font-semibold whitespace-nowrap"
                     >
                       {statusLabel(item.status)}
                     </button>
