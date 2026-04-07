@@ -231,7 +231,7 @@ function MiniRichEditor({
           e.preventDefault();
           const cur = document.queryCommandValue("formatBlock").toLowerCase();
           exec("formatBlock", cur === "blockquote" ? "p" : "blockquote");
-        }} className="h-6 w-6 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded text-sm">"</button>
+        }} className="h-6 w-6 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded text-sm">&ldquo;</button>
         <span className="w-px h-4 bg-gray-200 mx-0.5 flex-shrink-0" />
         <button type="button" title="Undo" onMouseDown={e => { e.preventDefault(); exec("undo"); }}
           className="h-6 px-1.5 flex items-center justify-center text-xs text-gray-500 hover:bg-gray-200 rounded">↺</button>
