@@ -2,14 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
-
-async function getTenantId(userId: string): Promise<string | null> {
-  const membership = await db.membership.findFirst({
-    where: { userId, status: "active" },
-    orderBy: { createdAt: "asc" },
-  });
-  return membership?.tenantId ?? null;
-}
+import { getTenantId } from "@/lib/api/getTenantId";
+import { createPrioritySchema } from "@/lib/schemas/prioritySchema";
 
 const PRIORITY_SELECT = {
   id: true,
@@ -83,24 +77,25 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, owner, teamId, quarter, year, startWeek, endWeek, overallStatus } = body;
-
-    if (!name || !owner || !quarter || !year) {
-      return NextResponse.json({ success: false, error: "Missing required fields: name, owner, quarter, year" }, { status: 400 });
+    const parsed = createPrioritySchema.safeParse(body);
+    if (!parsed.success) {
+      const error = parsed.error.errors[0]?.message ?? "Invalid input";
+      return NextResponse.json({ success: false, error }, { status: 400 });
     }
+    const { name, description, owner, teamId, quarter, year, startWeek, endWeek, overallStatus } = parsed.data;
 
     const priority = await db.priority.create({
       data: {
         tenantId,
         name,
-        description: description || null,
+        description: description ?? null,
         owner,
-        teamId: teamId || null,
+        teamId: teamId ?? null,
         quarter,
-        year: parseInt(String(year)),
-        startWeek: startWeek ? parseInt(String(startWeek)) : null,
-        endWeek: endWeek ? parseInt(String(endWeek)) : null,
-        overallStatus: overallStatus || "not-started",
+        year,
+        startWeek: startWeek ?? null,
+        endWeek: endWeek ?? null,
+        overallStatus: overallStatus ?? "not-yet-started",
         createdBy: session.user.id,
       },
       select: PRIORITY_SELECT,

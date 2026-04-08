@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useKPIs, useDeleteKPI } from "@/lib/hooks/useKPI";
+import { TableSkeleton } from "@/components/ui/Skeleton";
 import { useUsers } from "@/lib/hooks/useUsers";
 import { KPIListParams } from "@/lib/schemas/kpiSchema";
 import {
@@ -12,8 +13,10 @@ import {
 import { KPITable } from "./components/KPITable";
 import { HiddenColsMenu } from "./components/HiddenColsMenu";
 import { KPIModal } from "./components/KPIModal";
-import { ALL_STATIC_COLS, COL_LABELS } from "./hooks/useTableColumns";
+import { ALL_STATIC_COLS } from "./hooks/useTableColumns";
 import { ALL_WEEKS } from "@/lib/utils/fiscal";
+import { FilterPicker, userToFilterOption } from "@/components/FilterPicker";
+import { useFilterContext } from "@/lib/context/FilterContext";
 
 const FISCAL_YEAR = getFiscalYear();
 const FISCAL_QUARTER = getFiscalQuarter();
@@ -34,36 +37,49 @@ export default function IndividualKPIPage() {
 
   // Filter panel state
   const [showFilter, setShowFilter] = useState(false);
-  const [filterOwner, setFilterOwner] = useState("");
+  const { filterTeam, setFilterTeam, filterOwner, setFilterOwner } = useFilterContext();
   const [filterStatus, setFilterStatus] = useState("");
   const filterRef = useRef<HTMLDivElement>(null);
   const ownerInitialized = useRef(false);
 
-  // Users for owner dropdown
-  const { data: users = [] } = useUsers();
+  // Teams list
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    fetch("/api/org/teams").then(r => r.json()).then(d => {
+      if (d.success) setTeams(d.data.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+    });
+  }, []);
+
+  // Users for owner dropdown — filtered by team when one is selected
+  const { data: users = [] } = useUsers(filterTeam || undefined);
 
   // Year picker
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [availableYears, setAvailableYears] = useState<number[]>([FISCAL_YEAR]);
   const yearRef = useRef<HTMLDivElement>(null);
 
-  // Set default owner filter to current user once session loads
+  // Set default owner filter to current user once session loads (only if no filter already set)
   useEffect(() => {
-    if (session?.user?.id && !ownerInitialized.current) {
+    if (session?.user?.id && !ownerInitialized.current && !filterOwner) {
       setFilterOwner(session.user.id);
       ownerInitialized.current = true;
     }
   }, [session?.user?.id]);
 
-  // Apply filter changes
+  // Team member IDs for client-side filtering when team selected but no specific owner
+  const teamUserIds = useMemo(() => new Set(users.map(u => u.id)), [users]);
+
+  // Apply filter changes — when a team is selected with no specific owner,
+  // fetch all (pageSize:1000) and filter client-side by teamUserIds
   useEffect(() => {
     setFilters(f => ({
       ...f,
       status: (filterStatus as any) || undefined,
       owner: filterOwner || undefined,
+      pageSize: filterTeam && !filterOwner ? 1000 : 50,
       page: 1,
     }));
-  }, [filterStatus, filterOwner]);
+  }, [filterStatus, filterOwner, filterTeam]);
 
   // Fetch available years
   useEffect(() => {
@@ -89,8 +105,12 @@ export default function IndividualKPIPage() {
   }, []);
 
   const { data, isLoading, error, refetch } = useKPIs(filters);
-  const kpis = data?.data ?? [];
-  const total = data?.total ?? 0;
+  const allKpis = data?.data ?? [];
+  // When team selected + no specific owner, filter client-side to team members only
+  const kpis = (filterTeam && !filterOwner)
+    ? allKpis.filter(k => teamUserIds.has(k.owner))
+    : allKpis;
+  const total = kpis.length;
 
   // Bulk delete
   const deleteKPI = useDeleteKPI();
@@ -117,7 +137,7 @@ export default function IndividualKPIPage() {
   const currentYear = filters.year ?? FISCAL_YEAR;
   const currentQuarter = filters.quarter ?? FISCAL_QUARTER;
   const fiscalWeek = getCurrentFiscalWeek(currentYear, currentQuarter);
-  const activeFilterCount = (filterStatus ? 1 : 0) + (filterOwner ? 1 : 0);
+  const activeFilterCount = (filterTeam ? 1 : 0) + (filterStatus ? 1 : 0) + (filterOwner ? 1 : 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -188,17 +208,22 @@ export default function IndividualKPIPage() {
             {showFilter && (
               <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
                 <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Team</p>
+                  <FilterPicker
+                    value={filterTeam}
+                    onChange={setFilterTeam}
+                    options={teams.map(t => ({ value: t.id, label: t.name }))}
+                    allLabel="All teams"
+                  />
+                </div>
+                <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Owner</p>
-                  <select
+                  <FilterPicker
                     value={filterOwner}
-                    onChange={e => setFilterOwner(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                  >
-                    <option value="">All owners</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
-                    ))}
-                  </select>
+                    onChange={setFilterOwner}
+                    options={users.map(userToFilterOption)}
+                    allLabel="All owners"
+                  />
                 </div>
                 <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Status</p>
@@ -210,9 +235,9 @@ export default function IndividualKPIPage() {
                     <option value="completed">Completed</option>
                   </select>
                 </div>
-                {(filterStatus || filterOwner) && (
+                {(filterTeam || filterStatus || filterOwner) && (
                   <button
-                    onClick={() => { setFilterStatus(""); setFilterOwner(""); }}
+                    onClick={() => { setFilterTeam(""); setFilterStatus(""); setFilterOwner(""); }}
                     className="w-full text-xs text-gray-500 hover:text-gray-800 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Clear filters
@@ -283,9 +308,25 @@ export default function IndividualKPIPage() {
       {/* Table Area */}
       <div className="flex-1 overflow-hidden">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full text-sm text-gray-400">Loading KPIs…</div>
+          <TableSkeleton rows={10} cols={8} />
         ) : error ? (
           <div className="flex items-center justify-center h-full text-sm text-red-500">Failed to load KPIs</div>
+        ) : kpis.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
+            <svg className="h-10 w-10 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            <p className="text-sm">No KPIs yet for this period</p>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-md hover:bg-gray-700 transition-colors"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add First KPI
+            </button>
+          </div>
         ) : (
           <KPITable
             kpis={kpis}

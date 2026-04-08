@@ -2,14 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
-
-async function getTenantId(userId: string): Promise<string | null> {
-  const m = await db.membership.findFirst({
-    where: { userId, status: "active" },
-    orderBy: { createdAt: "asc" },
-  });
-  return m?.tenantId ?? null;
-}
+import { getTenantId } from "@/lib/api/getTenantId";
+import { createTeamSchema } from "@/lib/schemas/teamSchema";
 
 // GET /api/org/teams — all teams with member count and head info
 export async function GET(request: NextRequest) {
@@ -82,10 +76,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "No active membership" }, { status: 403 });
 
     const body = await request.json();
-    const { name, description, color = "#0066cc", headId } = body;
-
-    if (!name?.trim())
-      return NextResponse.json({ success: false, error: "Team name is required" }, { status: 400 });
+    const parsed = createTeamSchema.safeParse(body);
+    if (!parsed.success) {
+      const error = parsed.error.errors[0]?.message ?? "Invalid input";
+      return NextResponse.json({ success: false, error }, { status: 400 });
+    }
+    const { name, description, color, headId } = parsed.data;
 
     const existing = await db.team.findFirst({
       where: { tenantId, name: { equals: name.trim(), mode: "insensitive" } },

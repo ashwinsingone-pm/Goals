@@ -2,14 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
-
-async function getTenantId(userId: string): Promise<string | null> {
-  const membership = await db.membership.findFirst({
-    where: { userId, status: "active" },
-    orderBy: { createdAt: "asc" },
-  });
-  return membership?.tenantId ?? null;
-}
+import { getTenantId } from "@/lib/api/getTenantId";
+import { createWWWSchema } from "@/lib/schemas/wwwSchema";
 
 // GET /api/www — list all WWWItems for tenant
 export async function GET(request: NextRequest) {
@@ -30,6 +24,12 @@ export async function GET(request: NextRequest) {
 
     const where: Record<string, unknown> = { tenantId };
     if (status) where.status = status;
+    if (search) {
+      where.OR = [
+        { what:  { contains: search, mode: "insensitive" } },
+        { notes: { contains: search, mode: "insensitive" } },
+      ];
+    }
 
     const items = await db.wWWItem.findMany({
       where,
@@ -46,8 +46,7 @@ export async function GET(request: NextRequest) {
       : [];
     const userMap = Object.fromEntries(users.map(u => [u.id, u]));
 
-    // Attach who_user and serialize dates
-    let result = items.map(item => ({
+    const result = items.map(item => ({
       ...item,
       when: item.when.toISOString(),
       originalDueDate: item.originalDueDate?.toISOString() ?? null,
@@ -55,16 +54,6 @@ export async function GET(request: NextRequest) {
       updatedAt: item.updatedAt.toISOString(),
       who_user: userMap[item.who] ?? null,
     }));
-
-    // Client-side style search filter (what or notes)
-    if (search) {
-      const q = search.toLowerCase();
-      result = result.filter(
-        i =>
-          i.what.toLowerCase().includes(q) ||
-          (i.notes ?? "").toLowerCase().includes(q)
-      );
-    }
 
     return NextResponse.json({ success: true, data: result });
   } catch (error: unknown) {
@@ -88,14 +77,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { who, what, when, status, notes, category, originalDueDate } = body;
-
-    if (!who || !what || !when) {
-      return NextResponse.json(
-        { success: false, error: "Missing required fields: who, what, when" },
-        { status: 400 }
-      );
+    const parsed = createWWWSchema.safeParse(body);
+    if (!parsed.success) {
+      const error = parsed.error.errors[0]?.message ?? "Invalid input";
+      return NextResponse.json({ success: false, error }, { status: 400 });
     }
+    const { who, what, when, status, notes, category, originalDueDate } = parsed.data;
 
     const item = await db.wWWItem.create({
       data: {
@@ -103,9 +90,9 @@ export async function POST(request: NextRequest) {
         who,
         what,
         when: new Date(when),
-        status: status || "not-yet-started",
-        notes: notes || null,
-        category: category || null,
+        status: status ?? "not-yet-started",
+        notes: notes ?? null,
+        category: category ?? null,
         originalDueDate: originalDueDate ? new Date(originalDueDate) : null,
         revisedDates: [],
         createdBy: session.user.id,

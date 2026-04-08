@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { KPIRow, WeeklyValue } from "@/lib/types/kpi";
 import { ALL_WEEKS, weekDateLabel } from "@/lib/utils/fiscal";
-import { progressColor, weekCellColors } from "@/lib/utils/kpiHelpers";
+import { progressColor, weekCellColors, fmt, fmtCompact } from "@/lib/utils/kpiHelpers";
 import { useTableColumns, ALL_STATIC_COLS, COL_LABELS, SORT_KEYS } from "../hooks/useTableColumns";
 import { useStickyOffsets } from "../hooks/useStickyOffsets";
 import { LogModal } from "./LogModal";
@@ -238,7 +238,7 @@ export function KPITable({ kpis, total, page, pageSize, year, quarter, onPageCha
                   )}
                   {/* Target Value */}
                   {!hiddenCols.has("targetValue") && (
-                    <td className={tdClass("targetValue")} style={stickyStyle("targetValue", getColWidth("targetValue"))}>{kpi.target ?? "—"}</td>
+                    <td className={tdClass("targetValue")} style={stickyStyle("targetValue", getColWidth("targetValue"))}>{fmtCompact(kpi.target ?? null)}</td>
                   )}
                   {/* Description */}
                   {!hiddenCols.has("description") && (
@@ -268,8 +268,8 @@ export function KPITable({ kpis, total, page, pageSize, year, quarter, onPageCha
                         ].join(" ")}
                         style={stickyStyle(col, colW)}>
                         {val !== undefined && val !== null ? (
-                          <WeekTooltip weekNumber={w} note={note}>
-                            <div className="flex items-center justify-center w-full h-full px-2 py-2 cursor-default">{val}</div>
+                          <WeekTooltip weekNumber={w} value={val} note={note}>
+                            <div className="flex items-center justify-center w-full h-full px-2 py-2 cursor-default">{fmtCompact(val)}</div>
                           </WeekTooltip>
                         ) : (
                           <div className="flex items-center justify-center px-2 py-2 text-gray-300 font-normal">—</div>

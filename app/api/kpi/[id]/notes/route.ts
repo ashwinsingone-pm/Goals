@@ -3,11 +3,8 @@ import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { kpiNoteSchema } from "@/lib/schemas/kpiSchema";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string) {
-  const m = await db.membership.findFirst({ where: { userId, status: "active" }, orderBy: { createdAt: "asc" } });
-  return m?.tenantId ?? null;
-}
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {

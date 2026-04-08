@@ -11,6 +11,7 @@ import {
   Users, User, CalendarDays, Briefcase, Clock,
   BookOpen, Star, List, UserCheck, Hash, BarChart,
   ChevronDown, ChevronLeft, ChevronRight, X,
+  BarChart2, LineChart, ClipboardList, Layers,
 } from "lucide-react";
 
 /* ─── Types ─── */
@@ -45,11 +46,12 @@ const navigation: NavItem[] = [
     { label: "Category Mgmt",     href: "/opsp/categories", icon: List },
   ]},
   { label: "Performance",    icon: TrendingUp,    children: [
-    { label: "Talent Assessment",  href: "/performance/talent",          icon: UserCheck },
-    { label: "Critical Number",    href: "/performance/critical-number", icon: Hash },
-    { label: "Critical Value",     href: "/performance/critical-value",  icon: BarChart },
-    { label: "Job Details",        href: "/performance/jobs",            icon: Briefcase },
-    { label: "Department",         href: "/performance/department",      icon: Building2 },
+    { label: "Scorecard",          href: "/performance/scorecard",    icon: BarChart2 },
+    { label: "Individual",         href: "/performance/individual",   icon: User },
+    { label: "Teams",              href: "/performance/teams",        icon: Users },
+    { label: "Trends",             href: "/performance/trends",       icon: LineChart },
+    { label: "Reviews",            href: "/performance/reviews",      icon: ClipboardList },
+    { label: "Talent",             href: "/performance/talent",       icon: Layers },
   ]},
 ];
 
