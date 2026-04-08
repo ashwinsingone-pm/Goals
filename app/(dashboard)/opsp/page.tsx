@@ -9,7 +9,7 @@ import {
   Copy, Undo2, Redo2, Bold, Italic, Underline,
   Strikethrough, List, ListOrdered, Quote,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  Calendar, X, Loader2, Printer,
+  Calendar, X, Loader2, Printer, Download,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════
@@ -754,51 +754,176 @@ function GoalsModal({ open, onClose, rows, onChange }: {
 }
 
 /* ═══════════════════════════════════════════════
-   OPSP Preview Modal
+   OPSP Preview Modal  —  matches Scaling Up PDF layout
 ═══════════════════════════════════════════════ */
-function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => void; form: FormData }) {
+function OPSPPreview({ open, onClose, form, users = [] }: {
+  open: boolean; onClose: () => void; form: FormData;
+  users?: { id: string; firstName: string; lastName: string }[];
+}) {
+  const pagesRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadPDF = useCallback(async () => {
+    if (!pagesRef.current || downloading) return;
+    setDownloading(true);
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+
+      // A4 landscape: 297mm × 210mm
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pdfW = pdf.internal.pageSize.getWidth();   // 297
+      const pdfH = pdf.internal.pageSize.getHeight();  // 210
+      const margin = 6; // mm margin on all sides
+
+      const pages = pagesRef.current.querySelectorAll<HTMLElement>("[data-opsp-page]");
+
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+
+        // Temporarily force a fixed width matching A4 landscape aspect ratio
+        // A4 landscape ratio ≈ 1.414 → for clean rendering use 1120px
+        const captureW = 1120;
+        const origWidth = page.style.width;
+        const origMaxWidth = page.style.maxWidth;
+        const origPadding = page.style.paddingBottom;
+        page.style.width = `${captureW}px`;
+        page.style.maxWidth = `${captureW}px`;
+        page.style.paddingBottom = "12px";
+
+        const canvas = await html2canvas(page, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          windowWidth: captureW,
+        });
+
+        // Restore
+        page.style.width = origWidth;
+        page.style.maxWidth = origMaxWidth;
+        page.style.paddingBottom = origPadding;
+
+        const imgData = canvas.toDataURL("image/jpeg", 0.92);
+
+        if (i > 0) pdf.addPage();
+
+        // Fill the full page width (minus margins), let height scale proportionally
+        const drawW = pdfW - margin * 2;
+        const drawH = (canvas.height / canvas.width) * drawW;
+        const drawX = margin;
+        // If content is shorter than page, center vertically; if taller, top-align
+        const drawY = drawH < (pdfH - margin * 2)
+          ? margin + ((pdfH - margin * 2) - drawH) / 2
+          : margin;
+
+        pdf.addImage(imgData, "JPEG", drawX, drawY, drawW, Math.min(drawH, pdfH - margin * 2));
+      }
+
+      pdf.save(`OPSP_${form.year}_${form.quarter}.pdf`);
+    } catch (err) {
+      console.error("PDF download failed:", err);
+    } finally {
+      setDownloading(false);
+    }
+  }, [downloading, form.year, form.quarter]);
+
   if (!open) return null;
 
-  const critColors = ["bg-green-500", "bg-yellow-400", "bg-orange-400", "bg-red-500"];
+  /* ── helpers ── */
+  const ownerName = (id: string) => {
+    if (!id) return "";
+    const u = users.find(u => u.id === id);
+    return u ? `${u.firstName} ${u.lastName}` : id;
+  };
+  const fmtDue = (d: string) => {
+    if (!d) return "";
+    try {
+      const dt = new Date(d + "T00:00");
+      return `${String(dt.getMonth() + 1).padStart(2, "0")}/${String(dt.getDate()).padStart(2, "0")}/${dt.getFullYear()}`;
+    } catch { return d; }
+  };
+  const critColors = ["bg-green-600", "bg-yellow-500", "bg-orange-500", "bg-red-600"];
+  const html = (v: string) => ({ __html: v || "" });
 
-  function CritSection({ crit, label }: { crit: CritCard; label?: string }) {
+  /* ── shared cell classes ── */
+  const td = "border border-gray-400 px-1.5 py-1 align-top text-[9px] leading-snug text-gray-800";
+  const thBold = "text-center font-bold uppercase text-[9px] bg-gray-50";
+  const sub = "font-normal italic text-gray-500 text-[7px]";
+  const innerTd = "border border-gray-300 px-1.5 py-0.5 text-[9px] text-gray-800";
+
+  /* ── reusable sub-components ── */
+  function CritBlock({ crit, label }: { crit: CritCard; label: string }) {
     return (
-      <div>
-        <div className="text-[9px] font-bold uppercase mb-0.5">
-          Critical #:{label ? <span className="font-normal text-gray-500"> {label}</span> : null}
-          {crit.title ? <span className="font-normal text-gray-700"> {crit.title}</span> : null}
+      <div className="mb-1.5">
+        <div className="text-[8px] font-bold mb-0.5">
+          {label}{crit.title ? ` ${crit.title}` : ""}
         </div>
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-px">
           {crit.bullets.map((b, i) => (
             <div key={i} className="flex items-center gap-1 text-[9px]">
-              <span className={`w-2 h-2 rounded-sm flex-shrink-0 ${critColors[i]}`} />
-              <span className="text-gray-600 leading-none">{b || "\u00a0"}</span>
+              <span className={`w-2.5 h-2.5 flex-shrink-0 ${critColors[i] ?? "bg-gray-400"}`} />
+              <span className="text-gray-700">{b || "\u00a0"}</span>
             </div>
           ))}
         </div>
+        <div className="text-[7px] italic text-gray-400 mt-0.5">Between green &amp; red</div>
       </div>
     );
   }
 
-  function fmtDue(d: string) {
-    if (!d) return "";
-    try { return new Date(d + "T00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" }); } catch { return d; }
+  function CatProjTable({ rows, showEmpty = false }: { rows: { category: string; projected: string }[]; showEmpty?: boolean }) {
+    const visible = showEmpty ? rows : rows.filter(r => r.category);
+    if (visible.length === 0) return null;
+    return (
+      <table className="w-full border-collapse mb-1">
+        <thead>
+          <tr>
+            <th className={cn(innerTd, "font-bold text-left")}>Category</th>
+            <th className={cn(innerTd, "font-bold text-right whitespace-nowrap")} style={{ width: "80px" }}>Projected</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((r, i) => (
+            <tr key={i}>
+              <td className={innerTd}>{r.category}</td>
+              <td className={cn(innerTd, "text-right whitespace-nowrap")}>{r.projected}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
   }
 
-  const td = "border border-gray-300 px-1.5 py-1 align-top text-[9px] leading-snug";
-  const thBold = "text-center font-bold uppercase text-[9px]";
-  const sub = "italic text-gray-500 text-center text-[8px]";
+  function NumberedOwnerRows({ rows, nameResolver }: { rows: { desc: string; owner: string }[]; nameResolver: (id: string) => string }) {
+    return (
+      <table className="w-full border-collapse">
+        {rows.filter(r => r.desc).map((r, i) => (
+          <tr key={i}>
+            <td className="pr-1 text-gray-800 align-top whitespace-nowrap text-[9px]" style={{ width: "1em" }}>{i + 1}</td>
+            <td className="text-[9px] text-gray-800 py-px">{r.desc}</td>
+            <td className="text-[9px] text-gray-500 text-right whitespace-nowrap pl-1 py-px">{nameResolver(r.owner)}</td>
+          </tr>
+        ))}
+      </table>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-black/70">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-5 py-2.5 bg-gray-900 text-white flex-shrink-0">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-black/70 print:bg-white print:static">
+      {/* ── App toolbar (hidden on print) ── */}
+      <div className="flex items-center justify-between px-5 py-2.5 bg-gray-900 text-white flex-shrink-0 print:hidden">
         <span className="text-sm font-medium tracking-wide">OPSP Preview — {form.year} {form.quarter}</span>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition-colors"
-          >
+          <button onClick={handleDownloadPDF} disabled={downloading}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition-colors disabled:opacity-50">
+            {downloading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Download className="h-3.5 w-3.5" />}
+            {downloading ? "Generating..." : "Download PDF"}
+          </button>
+          <button onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition-colors">
             <Printer className="h-3.5 w-3.5" /> Print
           </button>
           <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
@@ -807,46 +932,42 @@ function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => vo
         </div>
       </div>
 
-      {/* Scrollable pages */}
-      <div className="flex-1 overflow-y-auto bg-gray-300 py-8 px-4">
-        <div className="max-w-[900px] mx-auto space-y-8" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
+      {/* ── Scrollable pages ── */}
+      <div className="flex-1 overflow-y-auto bg-gray-400 py-8 px-4 print:overflow-visible print:bg-white print:p-0">
+        <div ref={pagesRef} className="max-w-[1120px] mx-auto space-y-10 print:space-y-0" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
 
-          {/* ══ Page 1: PEOPLE (S3) ══ */}
-          <div className="bg-white shadow-xl">
+          {/* ═══════════════ PAGE 1 : PEOPLE ═══════════════ */}
+          <div data-opsp-page="1" className="bg-white shadow-xl print:shadow-none">
 
-            {/* Page header */}
-            <div className="flex border-b-[3px] border-blue-700">
-              <div className="flex-1 px-3 py-1.5">
-                <span className="text-sm font-bold text-blue-700">Strategy: </span>
-                <span className="text-xs">One-Page Strategic Plan (OPSP)</span>
+            {/* Blue header bar */}
+            <div className="flex bg-[#2563EB] text-white">
+              <div className="flex-1 px-3 py-1.5 flex items-center gap-1">
+                <span className="text-[11px] font-bold tracking-wide">Strategy:</span>
+                <span className="text-[10px]">One-Page Strategic Plan (OPSP)</span>
               </div>
-              <div className="border-l border-gray-300 px-3 py-1.5 flex items-center gap-1 text-[10px]">
+              <div className="border-l border-blue-400 px-3 py-1.5 flex items-center gap-1 text-[10px]">
                 <span className="font-semibold">Organization:</span>
               </div>
             </div>
 
-            <div className="px-3 pb-3 pt-2">
-              {/* People title */}
-              <div className="text-center text-[11px] font-bold mb-2">
-                <span className="text-blue-700">People</span>
-                <span className="font-normal italic text-gray-500"> (Reputation Drivers)</span>
+            <div className="px-4 pb-5 pt-2">
+              {/* Section title */}
+              <div className="text-center mb-2">
+                <span className="text-[13px] font-bold text-blue-700">People</span>
+                <span className="text-[11px] font-normal text-gray-600"> (Reputation Drivers)</span>
               </div>
 
-              {/* Employees / Customers / Shareholders */}
-              <table className="w-full mb-2 border-collapse border border-gray-300 text-[9px]">
+              {/* ── 3-col people names ── */}
+              <table className="w-full border-collapse mb-3 text-[10px]" style={{ tableLayout: "fixed" }}>
+                <colgroup><col style={{ width: "33.3%" }} /><col style={{ width: "33.4%" }} /><col style={{ width: "33.3%" }} /></colgroup>
                 <tbody>
                   {[0, 1, 2].map(i => (
                     <tr key={i}>
-                      {(["employees", "customers", "shareholders"] as const).map((key, ci) => (
-                        <td key={key} className={cn("px-2 py-0.5 border border-gray-300 w-1/3", i === 0 && "pt-1")}>
-                          {i === 0 && (
-                            <div className="font-bold uppercase text-[8px] text-center mb-0.5">
-                              {["Employees", "Customers", "Shareholders"][ci]}
-                            </div>
-                          )}
-                          <div className="flex items-baseline gap-1 border-b border-gray-200 min-h-[13px]">
-                            <span className="text-gray-400">{i + 1}.</span>
-                            <span className="text-gray-700">{(form[key] as string[])[i]}</span>
+                      {(["employees", "customers", "shareholders"] as const).map(key => (
+                        <td key={key} className="px-2 py-0.5">
+                          <div className="flex items-baseline gap-1 min-h-[16px] pb-0.5">
+                            <span className="text-gray-800">{i + 1}.</span>
+                            <span className="text-gray-800">{(form[key] as string[])[i]}</span>
                           </div>
                         </td>
                       ))}
@@ -855,127 +976,119 @@ function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => vo
                 </tbody>
               </table>
 
-              {/* 4-col main section */}
-              <table className="w-full border-collapse text-[9px] mb-2" style={{ tableLayout: "fixed" }}>
+              {/* ── Main 4-column table ── */}
+              <table className="w-full border-collapse mb-2" style={{ tableLayout: "fixed" }}>
                 <colgroup>
-                  <col style={{ width: "22%" }} />
-                  <col style={{ width: "26%" }} />
+                  <col style={{ width: "24%" }} />
+                  <col style={{ width: "24%" }} />
                   <col style={{ width: "26%" }} />
                   <col style={{ width: "26%" }} />
                 </colgroup>
                 <thead>
-                  <tr>
+                  <tr className="bg-gray-50">
                     <th className={cn(td, thBold)}>Core Values/Beliefs<br /><span className={sub}>(Should/Shouldn&apos;t)</span></th>
                     <th className={cn(td, thBold)}>Purpose<br /><span className={sub}>(Why)</span></th>
-                    <th className={cn(td, thBold)}>Targets (3–5 Yrs.)<br /><span className={sub}>(Where)</span></th>
+                    <th className={cn(td, thBold)}>Targets (3-5 Yrs.)<br /><span className={sub}>(Where)</span></th>
                     <th className={cn(td, thBold)}>Goals (1 Yr.)<br /><span className={sub}>(What)</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    {/* Core Values */}
+                    {/* ── Col 1: Core Values ── */}
                     <td className={td}>
-                      <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.coreValues || "<span class='text-gray-300'>—</span>" }} />
+                      <div className="prose-preview text-[9px] leading-snug [&_p]:mb-1.5 [&_strong]:font-bold" dangerouslySetInnerHTML={html(form.coreValues)} />
                     </td>
 
-                    {/* Purpose */}
+                    {/* ── Col 2: Purpose + Actions + Profit per X + BHAG ── */}
                     <td className={td}>
-                      <div className="prose-preview mb-1" dangerouslySetInnerHTML={{ __html: form.purpose || "" }} />
-                      <div className="border-t border-gray-200 pt-1">
-                        <div className="font-bold uppercase text-[8px]">Actions</div>
-                        <div className="italic text-gray-400 text-[8px]">To Live Values, Purposes, BHAG</div>
+                      <div className="prose-preview text-[9px] leading-snug [&_p]:mb-1 mb-1" dangerouslySetInnerHTML={html(form.purpose)} />
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px] text-center">Actions</div>
+                        <div className="italic text-gray-500 text-[7px] text-center mb-0.5">To Live Values, Purposes, BHAG</div>
                         {form.actions.map((v, i) => (
-                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                            <span>{v}</span>
+                          <div key={i} className="flex gap-1 min-h-[12px] py-px">
+                            <span className="text-gray-800 flex-shrink-0">{i + 1}</span>
+                            <span className="text-gray-800 break-words min-w-0">{v}</span>
                           </div>
                         ))}
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <span className="font-bold">Profit per X: </span>{form.profitPerX}
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Profit per X</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1" dangerouslySetInnerHTML={html(form.profitPerX)} />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold uppercase text-[8px]">BHAG®</div>
-                        <div>{form.bhag}</div>
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px]">BHAG&reg;</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1" dangerouslySetInnerHTML={html(form.bhag)} />
                       </div>
                     </td>
 
-                    {/* Targets */}
+                    {/* ── Col 3: Targets + Sandbox + Key Thrusts + Brand Promise ── */}
                     <td className={td}>
-                      {form.targetRows.slice(0, 5).map((row, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                          <span className="flex-1 truncate">{row.category}</span>
-                          <span className="text-gray-700 ml-1">{row.projected}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold text-[8px]">Sandbox</div>
-                        <div className="text-gray-600">{form.sandbox}</div>
+                      <CatProjTable rows={form.targetRows} />
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold italic text-[8px]">Sandbox</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-700" dangerouslySetInnerHTML={html(form.sandbox)} />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold uppercase text-[8px]">Key Thrusts/Capabilities</div>
-                        <div className="italic text-gray-400 text-[8px]">3–5 Year Priorities</div>
-                        {form.keyThrusts.map((row, i) => (
-                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                            <span className="flex-1 truncate">{row.desc}</span>
-                            <span className="text-gray-400 text-[8px]">{row.owner}</span>
-                          </div>
-                        ))}
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px] text-center">Key Thrusts/Capabilities</div>
+                        <div className="italic text-gray-500 text-[7px] text-center mb-0.5">3-5 Year Priorities</div>
+                        <NumberedOwnerRows rows={form.keyThrusts} nameResolver={ownerName} />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
                         <div className="font-bold text-[8px]">Brand Promise KPIs</div>
-                        <div className="text-gray-600">{form.brandPromiseKPIs}</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-700" dangerouslySetInnerHTML={html(form.brandPromiseKPIs)} />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold text-[8px]">Brand Promise</div>
-                        <div className="text-gray-600">{form.brandPromise}</div>
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold text-[8px]">Brand Promises</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-700" dangerouslySetInnerHTML={html(form.brandPromise)} />
                       </div>
                     </td>
 
-                    {/* Goals */}
+                    {/* ── Col 4: Goals + Key Initiatives + Critical # ── */}
                     <td className={td}>
-                      {form.goalRows.slice(0, 6).map((row, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                          <span className="flex-1 truncate">{row.category}</span>
-                          <span className="text-gray-700 ml-1">{row.projected}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold uppercase text-[8px]">Key Initiatives</div>
-                        <div className="italic text-gray-400 text-[8px]">1 Year Priorities</div>
-                        <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.keyInitiatives || "" }} />
+                      <CatProjTable rows={form.goalRows} />
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <div className="font-bold uppercase text-[8px] text-center">Key Initiatives</div>
+                        <div className="italic text-gray-500 text-[7px] text-center mb-0.5">1 Year Priorities</div>
+                        <div className="prose-preview text-[9px] [&_p]:mb-1 [&_ol]:list-decimal [&_ol]:pl-3 [&_li]:py-px" dangerouslySetInnerHTML={html(form.keyInitiatives)} />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.criticalNumGoals} label="People or B/S" />
+
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <CritBlock crit={form.criticalNumGoals} label="Critical #: " />
                       </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.balancingCritNumGoals} label="Process or P/L" />
+                      <div className="border-t border-gray-300 pt-1 mt-1">
+                        <CritBlock crit={form.balancingCritNumGoals} label="Balancing Critical #: " />
                       </div>
                     </td>
                   </tr>
                 </tbody>
               </table>
 
-              {/* Strengths / Weaknesses */}
-              <table className="w-full border-collapse border border-gray-300 text-[9px]">
+              {/* ── Strengths / Weaknesses ── */}
+              <table className="w-full border-collapse border border-gray-400 text-[9px]">
                 <tbody>
                   <tr>
-                    <td className="w-1/2 border-r border-gray-300 px-2 py-1">
+                    <td className="w-1/2 border border-gray-400 px-2 py-2 align-top">
                       <div className="font-bold text-[9px] mb-1">Strengths/Core Competencies</div>
                       {form.processItems.map((v, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
-                          <span className="text-gray-400">{i + 1}.</span><span>{v}</span>
+                        <div key={i} className="flex gap-1 min-h-[16px] py-0.5">
+                          <span className="text-gray-800">{i + 1}.</span><span className="text-gray-800">{v}</span>
                         </div>
                       ))}
                     </td>
-                    <td className="w-1/2 px-2 py-1">
+                    <td className="w-1/2 border border-gray-400 px-2 py-2 align-top">
                       <div className="font-bold text-[9px] mb-1">Weaknesses:</div>
                       {form.weaknesses.map((v, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
-                          <span className="text-gray-400">{i + 1}.</span><span>{v}</span>
+                        <div key={i} className="flex gap-1 min-h-[16px] py-0.5">
+                          <span className="text-gray-800">{i + 1}.</span><span className="text-gray-800">{v}</span>
                         </div>
                       ))}
                     </td>
@@ -985,30 +1098,42 @@ function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
-          {/* ══ Page 2: PROCESS (S4) ══ */}
-          <div className="bg-white shadow-xl">
-            <div className="px-3 pb-3 pt-2" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
-              {/* Process title */}
-              <div className="text-center text-[11px] font-bold mb-2">
-                <span className="text-blue-700">Process</span>
-                <span className="font-normal italic text-gray-500"> (Productivity Drivers)</span>
+          {/* ═══════════════ PAGE 2 : PROCESS ═══════════════ */}
+          <div data-opsp-page="2" className="bg-white shadow-xl print:shadow-none print:break-before-page">
+
+            {/* Blue header bar — Your Name / Date / SCALING UP */}
+            <div className="flex bg-[#2563EB] text-white">
+              <div className="flex-1 px-3 py-1.5 flex items-center gap-2 text-[10px]">
+                <span className="font-semibold">Your Name:</span>
+                <span className="border-b border-white/60 min-w-[120px] pb-px">{form.employees?.[0] ?? ""}</span>
+              </div>
+              <div className="border-l border-blue-400 px-3 py-1.5 flex items-center gap-1 text-[10px]">
+                <span className="font-semibold">Date:</span>
+                <span>{form.year} / {form.quarter}</span>
+              </div>
+              <div className="border-l border-blue-400 px-3 py-1.5 flex items-center text-[11px] font-bold tracking-wider">
+                SCALING UP
+              </div>
+            </div>
+
+            <div className="px-4 pb-5 pt-2">
+              {/* Section title */}
+              <div className="text-center mb-2">
+                <span className="text-[13px] font-bold text-blue-700">Process</span>
+                <span className="text-[11px] font-normal text-gray-600"> (Productivity Drivers)</span>
               </div>
 
-              {/* Make/Buy / Sell / Record Keeping */}
-              <table className="w-full mb-2 border-collapse border border-gray-300 text-[9px]">
+              {/* ── 3-col people names ── */}
+              <table className="w-full border-collapse mb-3 text-[10px]" style={{ tableLayout: "fixed" }}>
+                <colgroup><col style={{ width: "33.3%" }} /><col style={{ width: "33.4%" }} /><col style={{ width: "33.3%" }} /></colgroup>
                 <tbody>
                   {[0, 1, 2].map(i => (
                     <tr key={i}>
-                      {(["makeBuy", "sell", "recordKeeping"] as const).map((key, ci) => (
-                        <td key={key} className={cn("px-2 py-0.5 border border-gray-300 w-1/3", i === 0 && "pt-1")}>
-                          {i === 0 && (
-                            <div className="font-bold uppercase text-[8px] text-center mb-0.5">
-                              {["Make/Buy", "Sell", "Record Keeping"][ci]}
-                            </div>
-                          )}
-                          <div className="flex items-baseline gap-1 border-b border-gray-200 min-h-[13px]">
-                            <span className="text-gray-400">{i + 1}.</span>
-                            <span className="text-gray-700">{(form[key] as string[])[i]}</span>
+                      {(["makeBuy", "sell", "recordKeeping"] as const).map(key => (
+                        <td key={key} className="px-2 py-0.5">
+                          <div className="flex items-baseline gap-1 min-h-[16px] pb-0.5">
+                            <span className="text-gray-800">{i + 1}.</span>
+                            <span className="text-gray-800">{(form[key] as string[])[i]}</span>
                           </div>
                         </td>
                       ))}
@@ -1017,15 +1142,15 @@ function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => vo
                 </tbody>
               </table>
 
-              {/* 3-col process section */}
-              <table className="w-full border-collapse text-[9px] mb-2" style={{ tableLayout: "fixed" }}>
+              {/* ── Main 3-column table ── */}
+              <table className="w-full border-collapse mb-2" style={{ tableLayout: "fixed" }}>
                 <colgroup>
                   <col style={{ width: "33.3%" }} />
-                  <col style={{ width: "33.3%" }} />
+                  <col style={{ width: "33.4%" }} />
                   <col style={{ width: "33.3%" }} />
                 </colgroup>
                 <thead>
-                  <tr>
+                  <tr className="bg-gray-50">
                     <th className={cn(td, thBold)}>Actions (QTR)<br /><span className={sub}>(How)</span></th>
                     <th className={cn(td, thBold)}>Theme<br /><span className={sub}>(QTR/ANNUAL)</span></th>
                     <th className={cn(td, thBold)}>Your Accountability<br /><span className={sub}>(Who/When)</span></th>
@@ -1033,109 +1158,138 @@ function OPSPPreview({ open, onClose, form }: { open: boolean; onClose: () => vo
                 </thead>
                 <tbody>
                   <tr>
-                    {/* Actions QTR */}
+                    {/* ── Col 1: Actions QTR ── */}
                     <td className={td}>
-                      {form.actionsQtr.map((row, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                          <span className="flex-1 truncate text-gray-700">{row.category}</span>
-                          <span className="text-gray-700 ml-1">{row.projected}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold uppercase text-[8px]">Rocks</div>
-                        <div className="prose-preview" dangerouslySetInnerHTML={{ __html: form.rocks || "" }} />
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="flex justify-between font-bold text-[8px] mb-0.5">
-                          <span>Quarterly Priorities</span><span className="text-gray-400">Due</span>
-                        </div>
-                        {form.quarterlyPriorities.map((row, i) => (
-                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                            <span className="flex-1">{row.priority}</span>
-                            <span className="text-gray-400 text-[8px] flex-shrink-0">{fmtDue(row.dueDate)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.criticalNumProcess} label="People or B/S" />
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.balancingCritNumProcess} label="Process or P/L" />
-                      </div>
+                      <CatProjTable rows={form.actionsQtr} />
                     </td>
 
-                    {/* Theme */}
+                    {/* ── Col 2: Theme text ── */}
                     <td className={td}>
-                      <div className="text-gray-700">{form.theme}</div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold text-[8px]">Scoreboard Design</div>
-                        <div className="italic text-gray-400 text-[8px]">Describe and/or sketch your design in this space</div>
-                        <div className="text-gray-700">{form.scoreboardDesign}</div>
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold text-[8px]">Celebration</div>
-                        <div className="text-gray-700">{form.celebration}</div>
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="font-bold text-[8px]">Reward</div>
-                        <div className="text-gray-700">{form.reward}</div>
-                      </div>
+                      <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-800" dangerouslySetInnerHTML={html(form.theme)} />
                     </td>
 
-                    {/* YOUR ACCOUNTABILITY */}
+                    {/* ── Col 3: Your KPIs ── */}
                     <td className={td}>
-                      <div className="flex justify-between font-bold text-[8px] mb-0.5">
-                        <span>Your KPIs</span><span className="text-gray-400">Goal</span>
-                      </div>
-                      {form.kpiAccountability.map((row, i) => (
-                        <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                          <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                          <span className="flex-1">{row.kpi}</span>
-                          <span className="text-gray-600 ml-1">{row.goal}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <div className="flex justify-between font-bold text-[8px] mb-0.5">
-                          <span>Your Quarterly Priorities</span><span className="text-gray-400">Due</span>
-                        </div>
-                        {form.quarterlyPriorities.map((row, i) => (
-                          <div key={i} className="flex gap-1 border-b border-gray-100 min-h-[11px]">
-                            <span className="text-gray-400 flex-shrink-0">{i + 1}.</span>
-                            <span className="flex-1">{row.priority}</span>
-                            <span className="text-gray-400 text-[8px] flex-shrink-0">{fmtDue(row.dueDate)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.criticalNumAcct} label="People or B/S" />
-                      </div>
-                      <div className="border-t border-gray-200 pt-1 mt-1">
-                        <CritSection crit={form.balancingCritNumAcct} label="Process or P/L" />
-                      </div>
+                      <table className="w-full border-collapse mb-1">
+                        <thead>
+                          <tr>
+                            <th className={cn(innerTd, "font-bold text-left")}>Your KPI&apos;s</th>
+                            <th className={cn(innerTd, "font-bold text-right whitespace-nowrap")} style={{ width: "70px" }}>Goal</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {form.kpiAccountability.filter(r => r.kpi).map((r, i) => (
+                            <tr key={i}>
+                              <td className={innerTd}>{r.kpi}</td>
+                              <td className={cn(innerTd, "text-right whitespace-nowrap")}>{r.goal}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </td>
                   </tr>
                 </tbody>
               </table>
 
-              {/* Trends */}
-              <div className="border border-gray-300 px-2 py-1 text-[9px]">
+              {/* ── Second 3-column table: Rocks / Scoreboard / Quarterly Priorities ── */}
+              <table className="w-full border-collapse mb-2" style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "33.3%" }} />
+                  <col style={{ width: "33.4%" }} />
+                  <col style={{ width: "33.3%" }} />
+                </colgroup>
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className={cn(td, thBold)}>Rocks<br /><span className={sub}>1 Quarterly Priorities</span></th>
+                    <th className={cn(td, thBold)}>Scoreboard Design<br /><span className={sub}>Describe and/or sketch your design in this space</span></th>
+                    <th className={cn(td, "text-right text-[8px]")}>
+                      <div className="flex justify-between font-bold text-[8px]">
+                        <span>Your Quarterly Priorities</span><span className="italic font-normal text-gray-500">Due</span>
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {/* Rocks / rich text */}
+                    <td className={td}>
+                      <div className="prose-preview text-[9px] [&_p]:mb-1" dangerouslySetInnerHTML={html(form.rocks)} />
+                    </td>
+
+                    {/* Scoreboard Design */}
+                    <td className={td}>
+                      <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-800" dangerouslySetInnerHTML={html(form.scoreboardDesign)} />
+                    </td>
+
+                    {/* Your Quarterly Priorities with due dates */}
+                    <td className={td}>
+                      {form.quarterlyPriorities.map((row, i) => (
+                        <div key={i} className="flex gap-1 min-h-[14px] py-px text-[9px]">
+                          <span className="flex-1 text-gray-800">{row.priority}</span>
+                          <span className="text-gray-600 flex-shrink-0">{fmtDue(row.dueDate)}</span>
+                        </div>
+                      ))}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* ── Bottom 3-column: Critical # / Celebration+Reward / Critical # ── */}
+              <table className="w-full border-collapse mb-2" style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "33.3%" }} />
+                  <col style={{ width: "33.4%" }} />
+                  <col style={{ width: "33.3%" }} />
+                </colgroup>
+                <tbody>
+                  <tr>
+                    {/* Left critical blocks */}
+                    <td className={cn(td, "align-top")}>
+                      <CritBlock crit={form.criticalNumProcess} label="Critical #: " />
+                      <CritBlock crit={form.balancingCritNumProcess} label="Balancing Critical #: " />
+                    </td>
+
+                    {/* Celebration + Reward */}
+                    <td className={cn(td, "align-top")}>
+                      <div className="font-bold text-[8px] mb-0.5">Celebration</div>
+                      <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-800 mb-2" dangerouslySetInnerHTML={html(form.celebration)} />
+                      <div className="font-bold text-[8px] mb-0.5 border-t border-gray-300 pt-1">Reward</div>
+                      <div className="prose-preview text-[9px] [&_p]:mb-1 text-gray-800" dangerouslySetInnerHTML={html(form.reward)} />
+                    </td>
+
+                    {/* Right critical blocks */}
+                    <td className={cn(td, "align-top")}>
+                      <CritBlock crit={form.criticalNumAcct} label="Critical #: " />
+                      <CritBlock crit={form.balancingCritNumAcct} label="Balancing Critical #: " />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* ── Trends ── */}
+              <div className="border border-gray-400 px-2 py-1.5 text-[9px]">
                 <div className="font-bold text-[9px] mb-1">Trends</div>
-                <div className="grid grid-cols-2 gap-x-6">
+                <div className="grid grid-cols-2 gap-x-8">
                   {[0, 1].map(col => (
                     <div key={col}>
                       {[0, 1, 2].map(row => {
-                        const idx = col * 3 + row;
+                        const idx = row * 2 + col;
                         return (
-                          <div key={idx} className="flex gap-1 border-b border-gray-100 min-h-[13px]">
-                            <span className="text-gray-400">{idx + 1}.</span>
-                            <span className="text-gray-700">{form.trends[idx] ?? ""}</span>
+                          <div key={idx} className="flex gap-1 min-h-[14px] py-px">
+                            <span className="text-gray-800">{idx + 1}.</span>
+                            <span className="text-gray-800">{form.trends[idx] ?? ""}</span>
                           </div>
                         );
                       })}
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-between text-[7px] text-gray-400 mt-1">
+                <span>To get help implementing these tools, please go to www.ScalingUp.com</span>
+                <span>v2.0/2C &mdash; &copy; 2020 by Scaling Up Coaches S4</span>
               </div>
             </div>
           </div>
@@ -1156,6 +1310,7 @@ export default function OPSPPage() {
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [goalsOpen, setGoalsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const { data: allUsers = [] } = useUsers();
   const debounceRef = useRef<ReturnType<typeof setTimeout>|null>(null);
   const isFirstLoad = useRef(true);
   const skipNextSave = useRef(false);
@@ -1315,7 +1470,7 @@ export default function OPSPPage() {
       </div>
 
       {/* ── Preview ── */}
-      <OPSPPreview open={previewOpen} onClose={() => setPreviewOpen(false)} form={form} />
+      <OPSPPreview open={previewOpen} onClose={() => setPreviewOpen(false)} form={form} users={allUsers} />
 
       {/* ── Modals ── */}
       <TargetsModal open={targetsOpen} onClose={() => setTargetsOpen(false)}

@@ -37,7 +37,7 @@ export const kpiNoteSchema = z.object({
 // List Query Params
 export const kpiListParamsSchema = z.object({
   page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(100).default(20),
+  pageSize: z.number().int().min(1).max(1000).default(20),
   status: z.enum(["active", "paused", "completed"]).optional(),
   owner: z.string().cuid().optional(),
   teamId: z.string().cuid().optional(),

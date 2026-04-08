@@ -7,6 +7,7 @@ import type { KPIRow as KPI } from "@/lib/types/kpi";
 import type { User } from "@/lib/types/kpi";
 import { fiscalYearLabel, MEASUREMENT_UNITS, ALL_QUARTERS, ALL_WEEKS, weekDateLabel } from "@/lib/utils/fiscal";
 import { CURRENCIES, getScales, getMultiplier, formatActual } from "@/lib/utils/currency";
+import { UserPicker } from "@/components/UserPicker";
 
 interface Props {
   mode: "create" | "edit";
@@ -157,13 +158,7 @@ export function KPIModal({ mode, kpi, defaultYear, defaultQuarter, onClose, onSu
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Owner <span className="text-red-500">*</span>
               </label>
-              <select value={form.owner} onChange={e => set("owner", e.target.value)}
-                className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${errors.owner ? "border-red-400" : "border-gray-200"}`}>
-                <option value="">Select owner…</option>
-                {users.map(u => (
-                  <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
-                ))}
-              </select>
+              <UserPicker value={form.owner} onChange={v => set("owner", v)} users={users} error={!!errors.owner} />
               {errors.owner && <p className="text-[10px] text-red-500 mt-0.5">{errors.owner}</p>}
             </div>
             <div>

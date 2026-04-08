@@ -2,14 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string): Promise<string | null> {
-  const membership = await db.membership.findFirst({
-    where: { userId, status: "active" },
-    orderBy: { createdAt: "asc" },
-  });
-  return membership?.tenantId ?? null;
-}
 
 // GET /api/daily-huddle
 export async function GET(request: NextRequest) {

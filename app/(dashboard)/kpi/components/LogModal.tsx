@@ -5,7 +5,8 @@ import { useUpdateKPI, useUpdateWeeklyValue, useNotes, useAddNote } from "@/lib/
 import { useUsers } from "@/lib/hooks/useUsers";
 import type { KPIRow, WeeklyValue, User } from "@/lib/types/kpi";
 import { fiscalYearLabel, weekDateLabel, ALL_WEEKS, MEASUREMENT_UNITS, ALL_QUARTERS } from "@/lib/utils/fiscal";
-import { progressColor } from "@/lib/utils/kpiHelpers";
+import { progressColor, fmt } from "@/lib/utils/kpiHelpers";
+import { UserPicker } from "@/components/UserPicker";
 import { CURRENCIES, getScales, getMultiplier, formatActual } from "@/lib/utils/currency";
 
 interface Props { kpi: KPIRow; onClose: () => void; onRefresh: () => void; initialTab?: Tab; }
@@ -168,11 +169,7 @@ function EditTab({
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Owner <span className="text-red-500">*</span></label>
-          <select value={form.owner} onChange={e => set("owner", e.target.value)}
-            className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${errors.owner ? "border-red-400" : "border-gray-200"}`}>
-            <option value="">Select owner…</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>)}
-          </select>
+          <UserPicker value={form.owner} onChange={v => set("owner", v)} users={users} error={!!errors.owner} />
           {errors.owner && <p className="text-[10px] text-red-500 mt-0.5">{errors.owner}</p>}
         </div>
         <div>
@@ -421,7 +418,7 @@ function UpdatesTab({
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-semibold text-gray-700">Weekly Values</h3>
           {weeklyTarget > 0 && (
-            <span className="text-[10px] text-gray-400">Weekly target: {weeklyTarget.toFixed(1)}</span>
+            <span className="text-[10px] text-gray-400">Weekly target: {fmt(weeklyTarget)}</span>
           )}
         </div>
         <div className="flex items-center gap-3 mb-1">
@@ -522,8 +519,8 @@ function StatsTab({ kpi }: { kpi: KPIRow }) {
             </div>
             <div className="text-right">
               <div className="text-xs text-gray-500">Achieved</div>
-              <div className="text-lg font-semibold text-gray-800">{achieved.toFixed(1)}</div>
-              <div className="text-[10px] text-gray-400">of {target} target</div>
+              <div className="text-lg font-semibold text-gray-800">{fmt(achieved)}</div>
+              <div className="text-[10px] text-gray-400">of {fmt(target)} target</div>
             </div>
           </div>
           <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
@@ -536,7 +533,7 @@ function StatsTab({ kpi }: { kpi: KPIRow }) {
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Weeks Reported", value: String(filledWeeks.length) },
-          { label: "Avg / Week", value: avgPerWeek.toFixed(1) },
+          { label: "Avg / Week", value: fmt(avgPerWeek) },
           { label: "Best Week", value: bestWeek ? `W${bestWeek}` : "—" },
         ].map(s => (
           <div key={s.label} className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-center">

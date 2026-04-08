@@ -2,11 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string): Promise<string | null> {
-  const m = await db.membership.findFirst({ where: { userId, status: "active" }, orderBy: { createdAt: "asc" } });
-  return m?.tenantId ?? null;
-}
 
 // POST /api/priority/[id]/weekly — upsert a weekly status
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {

@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect, CSSProperties } from "react";
+import { useState, useRef, useEffect, useMemo, CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useKPIs } from "@/lib/hooks/useKPI";
 import { usePriorities } from "@/lib/hooks/usePriority";
 import { useWWWItems } from "@/lib/hooks/useWWW";
 import { useUsers } from "@/lib/hooks/useUsers";
+import { useFilterContext } from "@/lib/context/FilterContext";
+import { FilterPicker, userToFilterOption } from "@/components/FilterPicker";
 import type { KPIRow } from "@/lib/types/kpi";
 import type { PriorityRow } from "@/lib/types/priority";
 import type { WWWItem } from "@/lib/types/www";
@@ -13,7 +15,7 @@ import {
   getFiscalYear, getFiscalQuarter, fiscalYearLabel,
   weekDateLabel, ALL_WEEKS, getCurrentFiscalWeek,
 } from "@/lib/utils/fiscal";
-import { progressColor, weekCellColors } from "@/lib/utils/kpiHelpers";
+import { progressColor, weekCellColors, fmt, fmtCompact } from "@/lib/utils/kpiHelpers";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -187,6 +189,25 @@ function Section({ badge, count, children }: { badge: string; count?: number; ch
   );
 }
 
+const PAGE_SIZE = 10;
+
+function Paginator({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  if (pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+      <span>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}</span>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(page - 1)} disabled={page === 1}
+          className="px-2 py-1 rounded border border-gray-200 hover:bg-white disabled:opacity-30 transition-colors">←</button>
+        <span className="px-2 py-1 bg-gray-800 text-white rounded font-medium">{page}</span>
+        <button onClick={() => onChange(page + 1)} disabled={page >= pages}
+          className="px-2 py-1 rounded border border-gray-200 hover:bg-white disabled:opacity-30 transition-colors">→</button>
+      </div>
+    </div>
+  );
+}
+
 function SectionTable({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
@@ -298,13 +319,60 @@ function KPICard({ kpi }: { kpi: KPIRow }) {
     <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 hover:shadow-sm transition-shadow">
       <p className="text-[11px] text-gray-500 font-medium truncate mb-1.5" title={kpi.name}>{kpi.name}</p>
       <div className="flex items-baseline gap-1 mb-2">
-        <span className="text-base font-bold text-gray-800">{achieved}</span>
-        <span className="text-xs text-gray-400">/ {goal}</span>
+        <span className="text-base font-bold text-gray-800">{fmtCompact(achieved)}</span>
+        <span className="text-xs text-gray-400">/ {fmtCompact(goal)}</span>
       </div>
       <div className="flex items-center gap-2">
         <span className={`text-xs font-semibold ${colors.text}`}>{(kpi.progressPercent ?? 0).toFixed(0)}%</span>
         <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
           <div className={`h-1.5 rounded-full ${colors.bar}`} style={{ width: `${Math.min(kpi.progressPercent ?? 0, 100)}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AvgKPICard({ kpis }: { kpis: KPIRow[] }) {
+  const avg = kpis.length
+    ? Math.round(kpis.reduce((s, k) => s + (k.progressPercent ?? 0), 0) / kpis.length)
+    : 0;
+  const onTrack = kpis.filter(k => (k.progressPercent ?? 0) >= 80).length;
+  const atRisk  = kpis.filter(k => (k.progressPercent ?? 0) >= 50 && (k.progressPercent ?? 0) < 80).length;
+  const behind  = kpis.filter(k => (k.progressPercent ?? 0) < 50).length;
+
+  const ringColor = avg >= 80 ? "#22c55e" : avg >= 50 ? "#f59e0b" : "#ef4444";
+  const textColor = avg >= 80 ? "text-green-600" : avg >= 50 ? "text-amber-500" : "text-red-500";
+  const border    = avg >= 80 ? "border-green-200 bg-green-50" : avg >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+
+  const R = 10, CIRC = 2 * Math.PI * R;
+  const dash = (Math.min(avg, 100) / 100) * CIRC;
+
+  return (
+    <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full border ${border}`}>
+      {/* Mini donut */}
+      <svg width={28} height={28} viewBox="0 0 24 24" className="-rotate-90 flex-shrink-0">
+        <circle cx={12} cy={12} r={R} fill="none" stroke="#e5e7eb" strokeWidth={3} />
+        <circle cx={12} cy={12} r={R} fill="none" stroke={ringColor} strokeWidth={3}
+          strokeDasharray={`${dash} ${CIRC}`} strokeLinecap="round" />
+      </svg>
+      {/* Avg % */}
+      <span className={`text-sm font-bold ${textColor}`}>{avg}%</span>
+      <span className="text-xs text-gray-400">avg KPI</span>
+      {/* Divider */}
+      <span className="w-px h-4 bg-gray-300" />
+      {/* Breakdown */}
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col items-center leading-tight">
+          <span className="text-sm font-bold text-green-600">{onTrack}</span>
+          <span className="text-[10px] text-green-500">on track</span>
+        </div>
+        <div className="flex flex-col items-center leading-tight">
+          <span className="text-sm font-bold text-amber-500">{atRisk}</span>
+          <span className="text-[10px] text-amber-400">at risk</span>
+        </div>
+        <div className="flex flex-col items-center leading-tight">
+          <span className="text-sm font-bold text-red-500">{behind}</span>
+          <span className="text-[10px] text-red-400">behind</span>
         </div>
       </div>
     </div>
@@ -327,11 +395,14 @@ const ALL_KPI_COLS: ColDef[] = [...KPI_COLS, ...WEEK_COLS];
 
 function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; quarter: string }) {
   const [frozenUpTo, setFrozenUpTo] = useState<string | null>("name");
+  const [page, setPage] = useState(1);
   const allColKeys = ALL_KPI_COLS.map(c => c.key);
+  const paged = kpis.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (!kpis.length) return <EmptyState label="No KPI data found" />;
 
   return (
+    <>
     <SectionTable>
       <WeekTableHead
         staticCols={KPI_COLS} allCols={ALL_KPI_COLS}
@@ -339,7 +410,7 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
         year={year} quarter={quarter}
       />
       <tbody>
-        {kpis.map((kpi, ri) => {
+        {paged.map((kpi, ri) => {
           const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
           const weeklyGoal = (kpi.qtdGoal ?? kpi.target ?? 0) / 13;
           const weekMap: Record<number, number | null> = {};
@@ -373,7 +444,7 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
                       className={`border-r border-b border-gray-100 px-4 py-3 text-center ${colors ? colors.bar : frozenBg}`}
                       style={{ ...sticky, ...colW(col) }}>
                       <span className={`text-xs font-semibold ${colors ? "text-white" : "text-gray-300"}`}>
-                        {kpi.qtdAchieved ?? "—"}
+                        {kpi.qtdAchieved != null ? fmtCompact(kpi.qtdAchieved) : "—"}
                       </span>
                     </td>
                   );
@@ -382,9 +453,9 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
                 const content: Record<string, React.ReactNode> = {
                   name:       <span className="text-xs font-medium text-gray-800 line-clamp-2 block">{kpi.name}</span>,
                   unit:       <span className="text-xs text-gray-500">{kpi.measurementUnit}</span>,
-                  qtrGoal:    <span className="text-xs text-gray-700">{kpi.quarterlyGoal ?? kpi.target ?? "—"}</span>,
-                  qtdGoal:    <span className="text-xs text-gray-700">{kpi.qtdGoal ?? "—"}</span>,
-                  weeklyGoal: <span className="text-xs text-gray-700">{weeklyGoal > 0 ? weeklyGoal.toFixed(1) : "—"}</span>,
+                  qtrGoal:    <span className="text-xs text-gray-700">{fmtCompact(kpi.quarterlyGoal ?? kpi.target ?? null)}</span>,
+                  qtdGoal:    <span className="text-xs text-gray-700">{fmtCompact(kpi.qtdGoal ?? null)}</span>,
+                  weeklyGoal: <span className="text-xs text-gray-700">{weeklyGoal > 0 ? fmtCompact(weeklyGoal) : "—"}</span>,
                 };
 
                 return (
@@ -410,11 +481,11 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
                         <div className="space-y-1">
                           <div className="flex justify-between gap-3">
                             <span className="text-gray-400">Value</span>
-                            <span className="text-white font-medium">{val ?? "—"}</span>
+                            <span className="text-white font-medium">{val != null ? fmt(val) : "—"}</span>
                           </div>
                           <div className="flex justify-between gap-3">
                             <span className="text-gray-400">Target</span>
-                            <span className="text-white font-medium">{wTarget > 0 ? wTarget.toFixed(1) : "—"}</span>
+                            <span className="text-white font-medium">{wTarget > 0 ? fmt(wTarget) : "—"}</span>
                           </div>
                           {note && (
                             <p className="text-gray-300 text-[10px] mt-1.5 pt-1.5 border-t border-gray-700 leading-relaxed whitespace-pre-wrap">{note}</p>
@@ -423,7 +494,7 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
                       }
                     >
                       <div className="flex items-center justify-center w-full h-full min-h-[36px]">
-                        <span className={`text-xs font-semibold ${text}`}>{val ?? "–"}</span>
+                        <span className={`text-xs font-semibold ${text}`}>{val != null ? fmtCompact(val) : "–"}</span>
                       </div>
                     </WeekCellTooltip>
                   </td>
@@ -434,6 +505,8 @@ function KPISection({ kpis, year, quarter }: { kpis: KPIRow[]; year: number; qua
         })}
       </tbody>
     </SectionTable>
+    <Paginator page={page} total={kpis.length} onChange={setPage} />
+    </>
   );
 }
 
@@ -450,11 +523,14 @@ const ALL_PRI_COLS: ColDef[] = [...PRI_COLS, ...WEEK_COLS];
 
 function PrioritySection({ priorities, year, quarter }: { priorities: PriorityRow[]; year: number; quarter: string }) {
   const [frozenUpTo, setFrozenUpTo] = useState<string | null>("name");
+  const [page, setPage] = useState(1);
   const allColKeys = ALL_PRI_COLS.map(c => c.key);
+  const paged = priorities.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (!priorities.length) return <EmptyState label="No Priority data found" />;
 
   return (
+    <>
     <SectionTable>
       <WeekTableHead
         staticCols={PRI_COLS} allCols={ALL_PRI_COLS}
@@ -462,7 +538,7 @@ function PrioritySection({ priorities, year, quarter }: { priorities: PriorityRo
         year={year} quarter={quarter}
       />
       <tbody>
-        {priorities.map((p, ri) => {
+        {paged.map((p, ri) => {
           const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
           const start = p.startWeek ?? 1;
           const end = p.endWeek ?? 13;
@@ -547,6 +623,8 @@ function PrioritySection({ priorities, year, quarter }: { priorities: PriorityRo
         })}
       </tbody>
     </SectionTable>
+    <Paginator page={page} total={priorities.length} onChange={setPage} />
+    </>
   );
 }
 
@@ -563,11 +641,14 @@ const WWW_COLS: ColDef[] = [
 
 function WWWSection({ items }: { items: WWWItem[] }) {
   const [frozenUpTo, setFrozenUpTo] = useState<string | null>("who");
+  const [page, setPage] = useState(1);
   const allColKeys = WWW_COLS.map(c => c.key);
+  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (!items.length) return <EmptyState label="No WWW data found" />;
 
   return (
+    <>
     <div className="overflow-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
       <table className="border-separate border-spacing-0" style={{ tableLayout: "fixed", minWidth: "max-content", width: "100%" }}>
         <thead>
@@ -584,7 +665,7 @@ function WWWSection({ items }: { items: WWWItem[] }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((item, ri) => {
+          {paged.map((item, ri) => {
             const rowBg = ri % 2 === 0 ? "bg-white" : "bg-gray-50";
             const whoName = item.who_user ? `${item.who_user.firstName} ${item.who_user.lastName}` : "—";
             const lastRevised = item.revisedDates?.length ? item.revisedDates[item.revisedDates.length - 1] : null;
@@ -631,6 +712,8 @@ function WWWSection({ items }: { items: WWWItem[] }) {
         </tbody>
       </table>
     </div>
+    <Paginator page={page} total={items.length} onChange={setPage} />
+    </>
   );
 }
 
@@ -639,17 +722,60 @@ function WWWSection({ items }: { items: WWWItem[] }) {
 export default function DashboardPage() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [quarter, setQuarter] = useState<"Q1" | "Q2" | "Q3" | "Q4">(getFiscalQuarter() as "Q1" | "Q2" | "Q3" | "Q4");
-  const [filterOwner, setFilterOwner] = useState("");
+  const { filterTeam, setFilterTeam, filterOwner, setFilterOwner } = useFilterContext();
 
-  const { data: users = [] } = useUsers();
-  const { data: kpiData, isLoading: kpiLoading } = useKPIs({ year, quarter, owner: filterOwner || undefined });
-  const kpis: KPIRow[] = (kpiData?.data ?? []) as KPIRow[];
+  // Teams list (reuse the org/teams endpoint)
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    fetch("/api/org/teams").then(r => r.json()).then(d => {
+      if (d.success) setTeams(d.data.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+    });
+  }, []);
+
+  // Users filtered by selected team (hook refetches when teamId changes)
+  const { data: users = [] } = useUsers(filterTeam || undefined);
+
+  // Set of user IDs belonging to the selected team (all org members when no team selected)
+  const teamUserIds = useMemo(() => new Set(users.map(u => u.id)), [users]);
+
+  // Effective owner filter: specific owner > all team members > no filter
+  const ownerFilter = filterOwner || undefined;
+
+  // pageSize:1000 ensures all KPIs are fetched — needed for correct client-side team filtering
+  const { data: kpiData, isLoading: kpiLoading } = useKPIs({ year, quarter, owner: ownerFilter, pageSize: 1000 });
+  const allKpis: KPIRow[] = (kpiData?.data ?? []) as KPIRow[];
+  // When a team is selected but no specific owner, filter KPIs to team members
+  const kpis: KPIRow[] = (filterTeam && !filterOwner)
+    ? allKpis.filter(k => teamUserIds.has(k.owner))
+    : allKpis;
+
   const { data: allPriorities = [], isLoading: priLoading } = usePriorities(year, quarter);
-  const priorities = filterOwner ? allPriorities.filter(p => p.owner === filterOwner) : allPriorities;
+  const priorities = filterOwner
+    ? allPriorities.filter(p => p.owner === filterOwner)
+    : filterTeam
+      ? allPriorities.filter(p => teamUserIds.has(p.owner))
+      : allPriorities;
+
   const { data: allWWW = [], isLoading: wwwLoading } = useWWWItems({});
-  const wwwItems = filterOwner ? allWWW.filter(w => w.who === filterOwner) : allWWW;
+  const wwwItems = filterOwner
+    ? allWWW.filter(w => w.who === filterOwner)
+    : filterTeam
+      ? allWWW.filter(w => teamUserIds.has(w.who))
+      : allWWW;
 
   const currentWeek = getCurrentFiscalWeek(year, quarter);
+
+  const [showFilter, setShowFilter] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+  const activeFilterCount = (filterTeam ? 1 : 0) + (filterOwner ? 1 : 0);
+
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setShowFilter(false);
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
 
   const selectCls = "px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white text-gray-700";
 
@@ -662,12 +788,53 @@ export default function DashboardPage() {
           <span className="text-[11px] bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-medium">
             Week {currentWeek}
           </span>
+          {!kpiLoading && kpis.length > 0 && <AvgKPICard kpis={kpis} />}
         </div>
         <div className="flex items-center gap-2">
-          <select value={filterOwner} onChange={e => setFilterOwner(e.target.value)} className={selectCls}>
-            <option value="">All owners</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>)}
-          </select>
+          {/* Filter button */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilter(o => !o)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs border rounded-md hover:bg-gray-50 transition-colors ${showFilter || activeFilterCount > 0 ? "border-blue-300 bg-blue-50 text-blue-600" : "border-gray-200 text-gray-600"}`}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+              </svg>
+              {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}` : "Filter"}
+            </button>
+
+            {showFilter && (
+              <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Team</p>
+                  <FilterPicker
+                    value={filterTeam}
+                    onChange={setFilterTeam}
+                    options={teams.map(t => ({ value: t.id, label: t.name }))}
+                    allLabel="All teams"
+                  />
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Owner</p>
+                  <FilterPicker
+                    value={filterOwner}
+                    onChange={setFilterOwner}
+                    options={users.map(userToFilterOption)}
+                    allLabel="All owners"
+                  />
+                </div>
+                {(filterTeam || filterOwner) && (
+                  <button
+                    onClick={() => { setFilterTeam(""); setFilterOwner(""); }}
+                    className="w-full text-xs text-gray-500 hover:text-gray-800 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={selectCls}>
             {FISCAL_YEARS.map(y => <option key={y} value={y}>{fiscalYearLabel(y)}</option>)}
           </select>

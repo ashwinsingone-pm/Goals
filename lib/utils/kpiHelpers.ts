@@ -1,3 +1,26 @@
+/**
+ * Format a number for display: strips floating-point noise, max 2 decimal places,
+ * and removes trailing zeros. e.g. 97.521999 → "97.52", 4.0 → "4", 1.5 → "1.5"
+ */
+export function fmt(val: number | null | undefined, maxDecimals = 2): string {
+  if (val === null || val === undefined) return "—";
+  return parseFloat(val.toFixed(maxDecimals)).toString();
+}
+
+/**
+ * Compact format for tight cells — abbreviates large numbers so they never overflow.
+ * e.g. 127802.8 → "127.8K", 1234567 → "1.23M", 999 → "999", 97.52 → "97.52"
+ * Full value is shown in the tooltip.
+ */
+export function fmtCompact(val: number | null | undefined): string {
+  if (val === null || val === undefined) return "—";
+  const abs = Math.abs(val);
+  const sign = val < 0 ? "-" : "";
+  if (abs >= 1_000_000) return sign + parseFloat((abs / 1_000_000).toFixed(2)) + "M";
+  if (abs >= 1_000)     return sign + parseFloat((abs / 1_000).toFixed(1)) + "K";
+  return fmt(val);
+}
+
 /** Maps progress percentage to color classes for bar + text + label. */
 export function progressColor(pct: number) {
   if (pct >= 100) return { bar: "bg-blue-500", text: "text-blue-600", label: "On Track" };

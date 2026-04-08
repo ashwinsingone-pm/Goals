@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Plus, X, Search, Pencil, UserMinus, UserCheck,
-  ChevronDown, Shield, Users, User as UserIcon,
+  ChevronDown, Users, User as UserIcon, Check,
 } from "lucide-react";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -16,7 +16,8 @@ interface OrgUser {
   avatar:       string | null;
   role:         string;
   teamId:       string | null;
-  teamName:     string | null;
+  teamIds:      string[];
+  teamNames:    string[];
   status:       string;
   lastSignInAt: string | null;
   joinedAt:     string;
@@ -30,7 +31,7 @@ type FormState = {
   email:     string;
   password:  string;
   role:      string;
-  teamId:    string;
+  teamIds:   string[];
   status:    string;
 };
 
@@ -40,7 +41,7 @@ const EMPTY_FORM: FormState = {
   email:     "",
   password:  "",
   role:      "member",
-  teamId:    "",
+  teamIds:   [],
   status:    "active",
 };
 
@@ -97,6 +98,93 @@ function formatSignIn(iso: string | null): string {
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+/* ─── Multi-Team Picker ──────────────────────────────────────────────────────── */
+function TeamPicker({ selectedIds, teams, onChange }: {
+  selectedIds: string[];
+  teams: OrgTeam[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function h(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  function toggle(id: string) {
+    onChange(selectedIds.includes(id)
+      ? selectedIds.filter(x => x !== id)
+      : [...selectedIds, id]
+    );
+  }
+
+  const label = selectedIds.length === 0
+    ? "No teams"
+    : selectedIds.length === 1
+      ? teams.find(t => t.id === selectedIds[0])?.name ?? "1 team"
+      : `${selectedIds.length} teams`;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between border border-gray-200 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+      >
+        <div className="flex items-center gap-1.5 flex-wrap min-h-[20px]">
+          {selectedIds.length === 0 ? (
+            <span className="text-gray-400">No teams</span>
+          ) : (
+            selectedIds.map(id => {
+              const t = teams.find(x => x.id === id);
+              return t ? (
+                <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-[11px] font-semibold rounded-full">
+                  {t.name}
+                  <span
+                    role="button"
+                    onMouseDown={e => { e.stopPropagation(); toggle(id); }}
+                    className="cursor-pointer text-blue-400 hover:text-blue-700 leading-none"
+                  >×</span>
+                </span>
+              ) : null;
+            })
+          )}
+        </div>
+        <ChevronDown className="h-4 w-4 text-gray-400 flex-shrink-0 ml-1" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg w-full max-h-52 overflow-y-auto">
+          {teams.length === 0 ? (
+            <p className="px-4 py-3 text-xs text-gray-400">No teams available</p>
+          ) : teams.map(t => {
+            const checked = selectedIds.includes(t.id);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => toggle(t.id)}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 ${checked ? "bg-blue-50" : ""}`}
+              >
+                <span className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                  checked ? "bg-blue-600 border-blue-600" : "border-gray-300"
+                }`}>
+                  {checked && <Check className="h-2.5 w-2.5 text-white" />}
+                </span>
+                <span className={`text-sm ${checked ? "text-blue-700 font-medium" : "text-gray-700"}`}>{t.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── User Panel (Add / Edit) ───────────────────────────────────────────────── */
 function UserPanel({
   open, onClose, onSaved, editUser, teams,
@@ -107,12 +195,10 @@ function UserPanel({
   editUser: OrgUser | null;
   teams:    OrgTeam[];
 }) {
-  const [form, setForm]   = useState<FormState>(EMPTY_FORM);
+  const [form, setForm]     = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState("");
-  const [teamOpen, setTeamOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
-  const teamRef = useRef<HTMLDivElement>(null);
   const roleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -123,17 +209,15 @@ function UserPanel({
         email:     editUser.email,
         password:  "",
         role:      editUser.role,
-        teamId:    editUser.teamId ?? "",
+        teamIds:   editUser.teamIds ?? (editUser.teamId ? [editUser.teamId] : []),
         status:    editUser.status,
       } : EMPTY_FORM);
       setError("");
     }
   }, [open, editUser]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (teamRef.current && !teamRef.current.contains(e.target as Node)) setTeamOpen(false);
       if (roleRef.current && !roleRef.current.contains(e.target as Node)) setRoleOpen(false);
     }
     document.addEventListener("mousedown", handler);
@@ -157,7 +241,7 @@ function UserPanel({
         lastName:  form.lastName,
         email:     form.email,
         role:      form.role,
-        teamId:    form.teamId || null,
+        teamIds:   form.teamIds,
       };
       if (!editUser) payload.password = form.password;
       if (editUser && form.password.trim()) payload.password = form.password;
@@ -179,7 +263,6 @@ function UserPanel({
   if (!open) return null;
 
   const selectedRole = ROLES.find(r => r.value === form.role) ?? ROLES[2];
-  const selectedTeam = teams.find(t => t.id === form.teamId);
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -190,7 +273,7 @@ function UserPanel({
           <div>
             <p className="text-sm font-bold text-gray-900">{editUser ? "Edit User" : "Add New User"}</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              {editUser ? "Update user details and membership settings" : "Create a user account and add to the organisation"}
+              {editUser ? "Update user details and team memberships" : "Create a user account and assign to teams"}
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 mt-0.5">
@@ -205,36 +288,24 @@ function UserPanel({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1.5">First Name <span className="text-red-400">*</span></label>
-              <input
-                type="text"
-                value={form.firstName}
-                onChange={e => set("firstName", e.target.value)}
+              <input type="text" value={form.firstName} onChange={e => set("firstName", e.target.value)}
                 placeholder="Jane"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400"
-              />
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1.5">Last Name <span className="text-red-400">*</span></label>
-              <input
-                type="text"
-                value={form.lastName}
-                onChange={e => set("lastName", e.target.value)}
+              <input type="text" value={form.lastName} onChange={e => set("lastName", e.target.value)}
                 placeholder="Smith"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400"
-              />
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400" />
             </div>
           </div>
 
           {/* Email */}
           <div>
             <label className="text-xs font-medium text-gray-600 block mb-1.5">Email Address <span className="text-red-400">*</span></label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={e => set("email", e.target.value)}
+            <input type="email" value={form.email} onChange={e => set("email", e.target.value)}
               placeholder="jane@company.com"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400"
-            />
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400" />
           </div>
 
           {/* Password */}
@@ -242,24 +313,17 @@ function UserPanel({
             <label className="text-xs font-medium text-gray-600 block mb-1.5">
               Password {editUser ? <span className="text-gray-400 font-normal">(leave blank to keep unchanged)</span> : <span className="text-red-400">*</span>}
             </label>
-            <input
-              type="password"
-              value={form.password}
-              onChange={e => set("password", e.target.value)}
+            <input type="password" value={form.password} onChange={e => set("password", e.target.value)}
               placeholder={editUser ? "Enter new password to change" : "Set a password"}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400"
-            />
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400" />
           </div>
 
           {/* Role */}
           <div>
             <label className="text-xs font-medium text-gray-600 block mb-1.5">Role <span className="text-red-400">*</span></label>
             <div ref={roleRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setRoleOpen(o => !o)}
-                className="w-full flex items-center justify-between border border-gray-200 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
+              <button type="button" onClick={() => setRoleOpen(o => !o)}
+                className="w-full flex items-center justify-between border border-gray-200 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${selectedRole.color}`}>
                   {selectedRole.label}
                 </span>
@@ -268,16 +332,13 @@ function UserPanel({
               {roleOpen && (
                 <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg w-full">
                   {ROLES.map(r => (
-                    <button
-                      key={r.value}
-                      type="button"
+                    <button key={r.value} type="button"
                       onClick={() => { set("role", r.value); setRoleOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 ${form.role === r.value ? "bg-blue-50" : ""}`}
-                    >
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 ${form.role === r.value ? "bg-blue-50" : ""}`}>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${r.color}`}>{r.label}</span>
                       {r.value === "admin"   && <span className="text-xs text-gray-400">Full access</span>}
                       {r.value === "manager" && <span className="text-xs text-gray-400">Manage team data</span>}
-                      {r.value === "member"  && <span className="text-xs text-gray-400">View & edit own data</span>}
+                      {r.value === "member"  && <span className="text-xs text-gray-400">View &amp; edit own data</span>}
                     </button>
                   ))}
                 </div>
@@ -285,40 +346,16 @@ function UserPanel({
             </div>
           </div>
 
-          {/* Team */}
+          {/* Teams (multi-select) */}
           <div>
-            <label className="text-xs font-medium text-gray-600 block mb-1.5">Team <span className="text-gray-400 font-normal">(optional)</span></label>
-            <div ref={teamRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setTeamOpen(o => !o)}
-                className="w-full flex items-center justify-between border border-gray-200 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
-              >
-                <span className={selectedTeam ? "text-gray-700" : "text-gray-400"}>{selectedTeam?.name ?? "No team"}</span>
-                <ChevronDown className="h-4 w-4 text-gray-400" />
-              </button>
-              {teamOpen && (
-                <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg w-full max-h-48 overflow-y-auto">
-                  <button
-                    type="button"
-                    onClick={() => { set("teamId", ""); setTeamOpen(false); }}
-                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 italic text-gray-400 ${!form.teamId ? "bg-blue-50 text-blue-600 not-italic font-medium" : ""}`}
-                  >
-                    No team
-                  </button>
-                  {teams.map(t => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => { set("teamId", t.id); setTeamOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 ${form.teamId === t.id ? "bg-blue-50 text-blue-600 font-medium" : "text-gray-700"}`}
-                    >
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <label className="text-xs font-medium text-gray-600 block mb-1.5">
+              Teams <span className="text-gray-400 font-normal">(select one or more)</span>
+            </label>
+            <TeamPicker
+              selectedIds={form.teamIds}
+              teams={teams}
+              onChange={ids => set("teamIds", ids)}
+            />
           </div>
 
           {/* Status (edit only) */}
@@ -327,16 +364,12 @@ function UserPanel({
               <label className="text-xs font-medium text-gray-600 block mb-1.5">Status</label>
               <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
                 {["active", "inactive"].map(s => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => set("status", s)}
+                  <button key={s} type="button" onClick={() => set("status", s)}
                     className={`flex-1 py-2 text-xs font-semibold capitalize transition-colors ${
                       form.status === s
                         ? s === "active" ? "bg-green-500 text-white" : "bg-gray-400 text-white"
                         : "bg-white text-gray-500 hover:bg-gray-50"
-                    }`}
-                  >
+                    }`}>
                     {s.charAt(0).toUpperCase() + s.slice(1)}
                   </button>
                 ))}
@@ -354,11 +387,8 @@ function UserPanel({
           <button onClick={onClose} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-3 py-2 border border-gray-200 rounded-lg bg-white hover:bg-gray-50">
             <X className="h-3.5 w-3.5" /> Cancel
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50"
-          >
+          <button onClick={handleSubmit} disabled={saving}
+            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50">
             <Plus className="h-3.5 w-3.5" />
             {saving ? "Saving…" : editUser ? "Update User" : "Add User"}
           </button>
@@ -387,10 +417,8 @@ function ConfirmDialog({
         <p className="text-xs text-gray-500 mb-5">{message}</p>
         <div className="flex items-center justify-end gap-2">
           <button onClick={onCancel} className="px-4 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button
-            onClick={onConfirm}
-            className={`px-4 py-2 text-xs font-semibold text-white rounded-lg ${dangerous ? "bg-red-500 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-700"}`}
-          >
+          <button onClick={onConfirm}
+            className={`px-4 py-2 text-xs font-semibold text-white rounded-lg ${dangerous ? "bg-red-500 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-700"}`}>
             Confirm
           </button>
         </div>
@@ -407,20 +435,17 @@ export default function OrgUsersPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editUser, setEditUser]   = useState<OrgUser | null>(null);
   const [search, setSearch]       = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
+  const [roleFilter, setRoleFilter]     = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [confirmUser, setConfirmUser] = useState<OrgUser | null>(null);
+  const [filterOpen, setFilterOpen]     = useState(false);
+  const [confirmUser, setConfirmUser]   = useState<OrgUser | null>(null);
   const [confirmAction, setConfirmAction] = useState<"remove" | "reactivate">("remove");
   const filterRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [uRes, tRes] = await Promise.all([
-        fetch("/api/org/users"),
-        fetch("/api/org/teams"),
-      ]);
+      const [uRes, tRes] = await Promise.all([fetch("/api/org/users"), fetch("/api/org/teams")]);
       const [uJson, tJson] = await Promise.all([uRes.json(), tRes.json()]);
       if (uJson.success) setUsers(uJson.data);
       if (tJson.success) setTeams(tJson.data.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
@@ -444,8 +469,7 @@ export default function OrgUsersPage() {
     if (roleFilter   && u.role   !== roleFilter)   return false;
     if (search) {
       const q = search.toLowerCase();
-      const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
-      return fullName.includes(q) || u.email.toLowerCase().includes(q);
+      return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
     }
     return true;
   }), [users, search, roleFilter, statusFilter]);
@@ -453,19 +477,14 @@ export default function OrgUsersPage() {
   function handleSaved(user: OrgUser) {
     setUsers(prev => {
       const idx = prev.findIndex(u => u.userId === user.userId);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = user;
-        return next;
-      }
+      if (idx >= 0) { const next = [...prev]; next[idx] = user; return next; }
       return [...prev, user];
     });
   }
 
   async function handleStatusChange(user: OrgUser, newStatus: "inactive" | "active") {
     const res  = await fetch(`/api/org/users/${user.userId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
     });
     const json = await res.json();
@@ -473,8 +492,8 @@ export default function OrgUsersPage() {
     setConfirmUser(null);
   }
 
-  const activeCount  = users.filter(u => u.status === "active").length;
-  const filterCount  = (roleFilter ? 1 : 0) + (statusFilter !== "active" ? 1 : 0);
+  const activeCount = users.filter(u => u.status === "active").length;
+  const filterCount = (roleFilter ? 1 : 0) + (statusFilter !== "active" ? 1 : 0);
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -494,29 +513,19 @@ export default function OrgUsersPage() {
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search users…"
-              className="pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 w-48"
-            />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…"
+              className="pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 w-48" />
           </div>
 
           {/* Filter */}
           <div ref={filterRef} className="relative">
-            <button
-              onClick={() => setFilterOpen(o => !o)}
+            <button onClick={() => setFilterOpen(o => !o)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg ${
-                filterCount > 0
-                  ? "border-blue-300 bg-blue-50 text-blue-600"
-                  : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-              }`}
-            >
+                filterCount > 0 ? "border-blue-300 bg-blue-50 text-blue-600" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              }`}>
               Filter
               {filterCount > 0 && (
-                <span className="ml-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                  {filterCount}
-                </span>
+                <span className="ml-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{filterCount}</span>
               )}
             </button>
             {filterOpen && (
@@ -552,10 +561,8 @@ export default function OrgUsersPage() {
           </div>
 
           {/* Add User */}
-          <button
-            onClick={() => { setEditUser(null); setPanelOpen(true); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
-          >
+          <button onClick={() => { setEditUser(null); setPanelOpen(true); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg">
             <Plus className="h-3.5 w-3.5" /> Add User
           </button>
         </div>
@@ -563,10 +570,10 @@ export default function OrgUsersPage() {
 
       {/* ── Table ── */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse" style={{ minWidth: 820 }}>
+        <table className="w-full border-collapse" style={{ minWidth: 860 }}>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              {["User", "Email", "Role", "Team", "Status", "Last Sign In", "Actions"].map(h => (
+              {["User", "Email", "Role", "Teams", "Status", "Last Sign In", "Actions"].map(h => (
                 <th key={h} className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
                   {h}
                 </th>
@@ -589,6 +596,7 @@ export default function OrgUsersPage() {
             ) : filtered.map(u => {
               const full  = `${u.firstName} ${u.lastName}`;
               const color = avatarColor(full);
+              const teamNames = u.teamNames?.length ? u.teamNames : (u.teamId ? ["—"] : []);
               return (
                 <tr key={u.userId} className="hover:bg-gray-50/60 transition-colors group">
                   {/* User */}
@@ -604,12 +612,19 @@ export default function OrgUsersPage() {
                   <td className="px-4 py-3 text-xs text-gray-500">{u.email}</td>
                   {/* Role */}
                   <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
-                  {/* Team */}
+                  {/* Teams — chips */}
                   <td className="px-4 py-3">
-                    {u.teamName
-                      ? <span className="text-xs text-gray-700 font-medium">{u.teamName}</span>
-                      : <span className="text-xs text-gray-300">—</span>
-                    }
+                    {teamNames.length === 0 ? (
+                      <span className="text-xs text-gray-300">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {teamNames.map((name, i) => (
+                          <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   {/* Status */}
                   <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
@@ -618,27 +633,18 @@ export default function OrgUsersPage() {
                   {/* Actions */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => { setEditUser(u); setPanelOpen(true); }}
-                        title="Edit"
-                        className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                      >
+                      <button onClick={() => { setEditUser(u); setPanelOpen(true); }} title="Edit"
+                        className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       {u.status === "active" ? (
-                        <button
-                          onClick={() => { setConfirmUser(u); setConfirmAction("remove"); }}
-                          title="Deactivate"
-                          className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        >
+                        <button onClick={() => { setConfirmUser(u); setConfirmAction("remove"); }} title="Deactivate"
+                          className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
                           <UserMinus className="h-3.5 w-3.5" />
                         </button>
                       ) : (
-                        <button
-                          onClick={() => { setConfirmUser(u); setConfirmAction("reactivate"); }}
-                          title="Reactivate"
-                          className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
-                        >
+                        <button onClick={() => { setConfirmUser(u); setConfirmAction("reactivate"); }} title="Reactivate"
+                          className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors">
                           <UserCheck className="h-3.5 w-3.5" />
                         </button>
                       )}
@@ -652,13 +658,7 @@ export default function OrgUsersPage() {
       </div>
 
       {/* ── Panel ── */}
-      <UserPanel
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        onSaved={handleSaved}
-        editUser={editUser}
-        teams={teams}
-      />
+      <UserPanel open={panelOpen} onClose={() => setPanelOpen(false)} onSaved={handleSaved} editUser={editUser} teams={teams} />
 
       {/* ── Confirm Dialog ── */}
       <ConfirmDialog
@@ -666,7 +666,7 @@ export default function OrgUsersPage() {
         title={confirmAction === "remove" ? "Deactivate User?" : "Reactivate User?"}
         message={
           confirmAction === "remove"
-            ? `${confirmUser?.firstName} ${confirmUser?.lastName} will no longer have access to the organisation. You can reactivate them at any time.`
+            ? `${confirmUser?.firstName} ${confirmUser?.lastName} will no longer have access. You can reactivate them at any time.`
             : `${confirmUser?.firstName} ${confirmUser?.lastName} will regain full access to the organisation.`
         }
         dangerous={confirmAction === "remove"}

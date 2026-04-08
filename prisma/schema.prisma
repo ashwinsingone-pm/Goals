@@ -37,6 +37,7 @@ model Tenant {
 
   users               Membership[]
   teams               Team[]
+  userTeams           UserTeam[]
   kpis                KPI[]
   priorities          Priority[]
   wwwItems            WWWItem[]
@@ -53,6 +54,8 @@ model Tenant {
   auditLogs           AuditLog[]
   notifications       Notification[]
   featureFlags        FeatureFlag[]
+  performanceReviews  PerformanceReview[]
+  talentAssessments   TalentAssessment[]
 
   @@index([slug])
   @@index([status])
@@ -75,12 +78,17 @@ model User {
   updatedAt           DateTime @updatedAt
   lastSignInAt        DateTime?
 
+  userTeams           UserTeam[]
   kpisOwned           KPI[] @relation("KPIOwner")
   prioritiesOwned     Priority[] @relation("PriorityOwner")
   kpiNotes            KPINote[]
   opppPlan            OPSPPlan?
   opspData            OPSPData[]
   accountabilityFunctions AccountabilityFunction[]
+  reviewsGiven        PerformanceReview[] @relation("ReviewsGiven")
+  reviewsReceived     PerformanceReview[] @relation("ReviewsReceived")
+  talentAssessed      TalentAssessment[]  @relation("TalentAssessed")
+  talentAssessor      TalentAssessment[]  @relation("TalentAssessor")
 
   @@index([email])
 }
@@ -143,6 +151,25 @@ model Membership {
   @@index([role])
 }
 
+// ── User ↔ Team many-to-many (a user can belong to multiple teams) ──────────
+
+model UserTeam {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  teamId    String
+  createdAt DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId],  references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, teamId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([teamId])
+}
+
 // ============================================================================
 // ORGANIZATIONAL STRUCTURE
 // ============================================================================
@@ -165,6 +192,7 @@ model Team {
 
   tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   members             Membership[]
+  userTeams           UserTeam[]
   kpis                KPI[]
   priorities          Priority[]
   parentTeam          Team?    @relation("TeamHierarchy", fields: [parentTeamId], references: [id], onDelete: SetNull)
@@ -895,4 +923,71 @@ model QuarterSetting {
   @@unique([tenantId, fiscalYear, quarter])
   @@index([tenantId])
   @@index([fiscalYear])
+}
+
+// ============================================================================
+// PERFORMANCE MODULE
+// ============================================================================
+
+model PerformanceReview {
+  id              String   @id @default(cuid())
+  tenantId        String
+  reviewerId      String
+  revieweeId      String
+  quarter         String
+  year            Int
+
+  kpiScore        Float?
+  priorityScore   Float?
+  attendanceScore Float?
+  overallScore    Float?
+
+  rating          Int?
+  strengths       String?  @db.Text
+  improvements    String?  @db.Text
+  notes           String?  @db.Text
+
+  status          String   @default("draft")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reviewer        User     @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  reviewee        User     @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+
+  @@index([tenantId])
+  @@index([revieweeId])
+}
+
+// ============================================================================
+// TALENT ASSESSMENT
+// ============================================================================
+
+model TalentAssessment {
+  id               String   @id @default(cuid())
+  tenantId         String
+  userId           String
+  assessorId       String
+
+  potential        String   @default("medium")    // low | medium | high
+  flightRisk       String   @default("low")       // low | medium | high
+  successionReady  String   @default("not-ready") // not-ready | developing | ready-now
+
+  skills           String[]
+  developmentNotes String?  @db.Text
+
+  quarter          String
+  year             Int
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user             User     @relation("TalentAssessed", fields: [userId], references: [id])
+  assessor         User     @relation("TalentAssessor", fields: [assessorId], references: [id])
+
+  @@unique([tenantId, userId, quarter, year])
+  @@index([tenantId])
+  @@index([userId])
 }

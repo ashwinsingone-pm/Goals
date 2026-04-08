@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { usePriorities, useDeletePriority } from "@/lib/hooks/usePriority";
 import { useUsers } from "@/lib/hooks/useUsers";
+import { TableSkeleton } from "@/components/ui/Skeleton";
 import {
   getFiscalYear, getFiscalQuarter, fiscalYearLabel,
   getCurrentFiscalWeek, getWeekDateRange,
 } from "@/lib/utils/fiscal";
 import { PriorityTable } from "./components/PriorityTable";
 import { PriorityModal } from "./components/PriorityModal";
+import { FilterPicker, userToFilterOption } from "@/components/FilterPicker";
+import { useFilterContext } from "@/lib/context/FilterContext";
 
 const FISCAL_YEAR = getFiscalYear();
 const FISCAL_QUARTER = getFiscalQuarter();
@@ -22,10 +25,18 @@ export default function PriorityPage() {
 
   // Search + filter
   const [search, setSearch] = useState("");
-  const [filterOwner, setFilterOwner] = useState("");
+  const { filterTeam, setFilterTeam, filterOwner, setFilterOwner } = useFilterContext();
   const [filterStatus, setFilterStatus] = useState("");
   const [showFilter, setShowFilter] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+
+  // Teams list
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    fetch("/api/org/teams").then(r => r.json()).then(d => {
+      if (d.success) setTeams(d.data.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+    });
+  }, []);
 
   // Year/quarter picker
   const [showYearPicker, setShowYearPicker] = useState(false);
@@ -35,7 +46,8 @@ export default function PriorityPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const handleSelectionChange = useCallback((ids: Set<string>) => setSelectedIds(new Set(ids)), []);
 
-  const { data: users = [] } = useUsers();
+  const { data: users = [] } = useUsers(filterTeam || undefined);
+  const teamUserIds = useMemo(() => new Set(users.map(u => u.id)), [users]);
   const { data: priorities = [], isLoading, error, refetch } = usePriorities(year, quarter);
   const deletePriority = useDeletePriority();
 
@@ -59,13 +71,14 @@ export default function PriorityPage() {
   // Filter priorities client-side
   const filtered = priorities.filter(p => {
     if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filterOwner && p.owner !== filterOwner) return false;
+    if (filterOwner) { if (p.owner !== filterOwner) return false; }
+    else if (filterTeam) { if (!teamUserIds.has(p.owner)) return false; }
     if (filterStatus && p.overallStatus !== filterStatus) return false;
     return true;
   });
 
   const fiscalWeek = getCurrentFiscalWeek(year, quarter);
-  const activeFilterCount = (filterStatus ? 1 : 0) + (filterOwner ? 1 : 0);
+  const activeFilterCount = (filterTeam ? 1 : 0) + (filterStatus ? 1 : 0) + (filterOwner ? 1 : 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -132,17 +145,22 @@ export default function PriorityPage() {
             {showFilter && (
               <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
                 <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Team</p>
+                  <FilterPicker
+                    value={filterTeam}
+                    onChange={setFilterTeam}
+                    options={teams.map(t => ({ value: t.id, label: t.name }))}
+                    allLabel="All teams"
+                  />
+                </div>
+                <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Owner</p>
-                  <select
+                  <FilterPicker
                     value={filterOwner}
-                    onChange={e => setFilterOwner(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                  >
-                    <option value="">All owners</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
-                    ))}
-                  </select>
+                    onChange={setFilterOwner}
+                    options={users.map(userToFilterOption)}
+                    allLabel="All owners"
+                  />
                 </div>
                 <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Status</p>
@@ -159,9 +177,9 @@ export default function PriorityPage() {
                     <option value="not-applicable">Not Applicable</option>
                   </select>
                 </div>
-                {(filterStatus || filterOwner) && (
+                {(filterTeam || filterStatus || filterOwner) && (
                   <button
-                    onClick={() => { setFilterStatus(""); setFilterOwner(""); }}
+                    onClick={() => { setFilterTeam(""); setFilterStatus(""); setFilterOwner(""); }}
                     className="w-full text-xs text-gray-500 hover:text-gray-800 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Clear filters
@@ -230,12 +248,7 @@ export default function PriorityPage() {
       {/* Table Area */}
       <div className="flex-1 overflow-hidden">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          </div>
+          <TableSkeleton rows={10} cols={7} />
         ) : error ? (
           <div className="flex items-center justify-center h-full text-sm text-red-500">
             Failed to load priorities
