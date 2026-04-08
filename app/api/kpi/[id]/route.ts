@@ -4,11 +4,8 @@ import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { updateKPISchema } from "@/lib/schemas/kpiSchema";
 import { ApiResponse } from "@/lib/services/kpiService";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string): Promise<string | null> {
-  const m = await db.membership.findFirst({ where: { userId, status: "active" }, orderBy: { createdAt: "asc" } });
-  return m?.tenantId ?? null;
-}
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {

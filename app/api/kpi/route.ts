@@ -4,14 +4,8 @@ import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { createKPISchema, kpiListParamsSchema } from "@/lib/schemas/kpiSchema";
 import { ApiResponse } from "@/lib/services/kpiService";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string): Promise<string | null> {
-  const membership = await db.membership.findFirst({
-    where: { userId, status: "active" },
-    orderBy: { createdAt: "asc" },
-  });
-  return membership?.tenantId ?? null;
-}
 
 // GET /api/kpi - List KPIs with filters and pagination
 export async function GET(request: NextRequest) {

@@ -3,13 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useCreatePriority } from "@/lib/hooks/usePriority";
 import { useUsers } from "@/lib/hooks/useUsers";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { fiscalYearLabel, ALL_QUARTERS, getFiscalYear } from "@/lib/utils/fiscal";
-
-interface Team {
-  id: string;
-  name: string;
-}
+import { useTeams, type Team } from "@/lib/hooks/useTeams";
+import { UserPicker } from "@/components/UserPicker";
 
 interface Props {
   defaultYear?: number;
@@ -21,19 +18,6 @@ interface Props {
 const CURRENT_YEAR = getFiscalYear();
 const FISCAL_YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 1 + i);
 const WEEK_OPTIONS = Array.from({ length: 13 }, (_, i) => i + 1);
-
-function useTeams() {
-  return useQuery<Team[]>({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const res = await fetch("/api/teams");
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to fetch teams");
-      return data.data;
-    },
-    staleTime: 1000 * 60 * 5,
-  });
-}
 
 // ── Team select with inline Add New ──────────────────────────────────────────
 
@@ -281,11 +265,7 @@ export function PriorityModal({ defaultYear, defaultQuarter, onClose, onSuccess 
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Owner <span className="text-red-500">*</span>
               </label>
-              <select value={form.owner} onChange={e => set("owner", e.target.value)}
-                className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${errors.owner ? "border-red-400" : "border-gray-200"}`}>
-                <option value="">Select owner…</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>)}
-              </select>
+              <UserPicker value={form.owner} onChange={v => set("owner", v)} users={users} error={!!errors.owner} />
               {errors.owner && <p className="text-[10px] text-red-500 mt-0.5">{errors.owner}</p>}
             </div>
           </div>

@@ -1,17 +1,30 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useWWWItems, useDeleteWWW } from "@/lib/hooks/useWWW";
 import { useUsers } from "@/lib/hooks/useUsers";
+import { TableSkeleton } from "@/components/ui/Skeleton";
 import { WWWTable } from "./components/WWWTable";
 import { WWWPanel } from "./components/WWWPanel";
+import { FilterPicker, userToFilterOption } from "@/components/FilterPicker";
+import { useFilterContext } from "@/lib/context/FilterContext";
 
 export default function WWWPage() {
   const [search, setSearch] = useState("");
+  const { filterTeam, setFilterTeam, filterOwner: filterWho, setFilterOwner: setFilterWho } = useFilterContext();
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterWho, setFilterWho] = useState("");
   const [showFilter, setShowFilter] = useState(false);
-  const { data: users = [] } = useUsers();
+
+  // Teams list
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    fetch("/api/org/teams").then(r => r.json()).then(d => {
+      if (d.success) setTeams(d.data.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+    });
+  }, []);
+
+  const { data: users = [] } = useUsers(filterTeam || undefined);
+  const teamUserIds = useMemo(() => new Set(users.map(u => u.id)), [users]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -44,7 +57,8 @@ export default function WWWPage() {
 
   // Client-side filters
   const filtered = items.filter(item => {
-    if (filterWho && item.who !== filterWho) return false;
+    if (filterWho) { if (item.who !== filterWho) return false; }
+    else if (filterTeam) { if (!teamUserIds.has(item.who)) return false; }
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -53,7 +67,7 @@ export default function WWWPage() {
     );
   });
 
-  const activeFilterCount = (filterStatus ? 1 : 0) + (filterWho ? 1 : 0);
+  const activeFilterCount = (filterTeam ? 1 : 0) + (filterStatus ? 1 : 0) + (filterWho ? 1 : 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -115,19 +129,24 @@ export default function WWWPage() {
             </button>
 
             {showFilter && (
-              <div className="absolute top-full right-0 mt-1.5 w-56 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+              <div className="absolute top-full right-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Team</p>
+                  <FilterPicker
+                    value={filterTeam}
+                    onChange={setFilterTeam}
+                    options={teams.map(t => ({ value: t.id, label: t.name }))}
+                    allLabel="All teams"
+                  />
+                </div>
                 <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Who</p>
-                  <select
+                  <FilterPicker
                     value={filterWho}
-                    onChange={e => setFilterWho(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                  >
-                    <option value="">All people</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
-                    ))}
-                  </select>
+                    onChange={setFilterWho}
+                    options={users.map(userToFilterOption)}
+                    allLabel="All people"
+                  />
                 </div>
                 <div>
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Status</p>
@@ -144,9 +163,9 @@ export default function WWWPage() {
                     <option value="completed">Completed</option>
                   </select>
                 </div>
-                {(filterStatus || filterWho) && (
+                {(filterTeam || filterStatus || filterWho) && (
                   <button
-                    onClick={() => { setFilterStatus(""); setFilterWho(""); }}
+                    onClick={() => { setFilterTeam(""); setFilterStatus(""); setFilterWho(""); }}
                     className="w-full text-xs text-gray-500 hover:text-gray-800 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Clear filters
@@ -172,12 +191,7 @@ export default function WWWPage() {
       {/* Table Area */}
       <div className="flex-1 overflow-hidden">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          </div>
+          <TableSkeleton rows={10} cols={6} />
         ) : error ? (
           <div className="flex items-center justify-center h-full text-sm text-red-500">
             Failed to load WWW items

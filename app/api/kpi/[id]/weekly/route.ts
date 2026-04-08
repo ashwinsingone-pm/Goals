@@ -3,11 +3,8 @@ import { getServerSession } from "next-auth";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { weeklyValueSchema } from "@/lib/schemas/kpiSchema";
+import { getTenantId } from "@/lib/api/getTenantId";
 
-async function getTenantId(userId: string) {
-  const m = await db.membership.findFirst({ where: { userId, status: "active" }, orderBy: { createdAt: "asc" } });
-  return m?.tenantId ?? null;
-}
 
 function calcHealthStatus(progress: number, status: string): string {
   if (status === "completed") return "complete";

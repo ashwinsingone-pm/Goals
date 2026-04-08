@@ -3,14 +3,11 @@
 import { useState } from "react";
 import { useUpdatePriority, useUpdateWeeklyStatus } from "@/lib/hooks/usePriority";
 import { useUsers } from "@/lib/hooks/useUsers";
-import { useQuery } from "@tanstack/react-query";
+import { useTeams } from "@/lib/hooks/useTeams";
 import type { PriorityRow } from "@/lib/types/priority";
 import { fiscalYearLabel, ALL_QUARTERS, getFiscalYear, weekDateLabel } from "@/lib/utils/fiscal";
-
-interface Team {
-  id: string;
-  name: string;
-}
+import { STATUS_META } from "@/lib/constants/status";
+import { UserPicker } from "@/components/UserPicker";
 
 interface Props {
   priority: PriorityRow;
@@ -23,34 +20,15 @@ const FISCAL_YEARS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 1 + i);
 const WEEK_OPTIONS = Array.from({ length: 13 }, (_, i) => i + 1);
 
 const STATUS_OPTIONS = [
-  { value: "not-applicable", label: "Not Applicable", selectedClass: "bg-gray-100 text-gray-600 border-gray-300 ring-2 ring-gray-300", baseClass: "bg-white text-gray-400 border-gray-200 hover:bg-gray-50" },
-  { value: "not-yet-started", label: "Not Yet Started", selectedClass: "bg-red-100 text-red-700 border-red-300 ring-2 ring-red-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-red-50" },
-  { value: "behind-schedule", label: "Behind Schedule", selectedClass: "bg-amber-100 text-amber-700 border-amber-300 ring-2 ring-amber-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-amber-50" },
-  { value: "on-track", label: "On Track", selectedClass: "bg-green-100 text-green-700 border-green-300 ring-2 ring-green-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-green-50" },
-  { value: "completed", label: "Completed", selectedClass: "bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-blue-50" },
-  { value: "", label: "Clear", selectedClass: "bg-gray-100 text-gray-500 border-gray-300 ring-2 ring-gray-200", baseClass: "bg-white text-gray-300 border-gray-200 hover:bg-gray-50" },
+  { value: "not-applicable",  label: "Not Applicable",  selectedClass: "bg-gray-100 text-gray-600 border-gray-300 ring-2 ring-gray-300",   baseClass: "bg-white text-gray-400 border-gray-200 hover:bg-gray-50"   },
+  { value: "not-yet-started", label: "Not Yet Started", selectedClass: "bg-red-100 text-red-700 border-red-300 ring-2 ring-red-300",        baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-red-50"    },
+  { value: "behind-schedule", label: "Behind Schedule", selectedClass: "bg-amber-100 text-amber-700 border-amber-300 ring-2 ring-amber-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-amber-50"  },
+  { value: "on-track",        label: "On Track",        selectedClass: "bg-green-100 text-green-700 border-green-300 ring-2 ring-green-300", baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-green-50"  },
+  { value: "completed",       label: "Completed",       selectedClass: "bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-300",     baseClass: "bg-white text-gray-600 border-gray-200 hover:bg-blue-50"   },
+  { value: "",                label: "Clear",            selectedClass: "bg-gray-100 text-gray-500 border-gray-300 ring-2 ring-gray-200",    baseClass: "bg-white text-gray-300 border-gray-200 hover:bg-gray-50"   },
 ];
 
-const OVERALL_STATUS_OPTIONS = [
-  { value: "not-applicable", label: "Not Applicable" },
-  { value: "not-yet-started", label: "Not Yet Started" },
-  { value: "behind-schedule", label: "Behind Schedule" },
-  { value: "on-track", label: "On Track" },
-  { value: "completed", label: "Completed" },
-];
-
-function useTeams() {
-  return useQuery<Team[]>({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const res = await fetch("/api/teams");
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to fetch teams");
-      return data.data;
-    },
-    staleTime: 1000 * 60 * 5,
-  });
-}
+const OVERALL_STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, m]) => ({ value, label: m.label }));
 
 export function PriorityLogModal({ priority, onClose, onSuccess }: Props) {
   const [tab, setTab] = useState<"edit" | "weekly" | "notes">("edit");
@@ -226,11 +204,7 @@ export function PriorityLogModal({ priority, onClose, onSuccess }: Props) {
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Owner <span className="text-red-500">*</span>
                   </label>
-                  <select value={form.owner} onChange={e => setField("owner", e.target.value)}
-                    className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${errors.owner ? "border-red-400" : "border-gray-200"}`}>
-                    <option value="">Select owner…</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>)}
-                  </select>
+                  <UserPicker value={form.owner} onChange={v => setField("owner", v)} users={users} error={!!errors.owner} />
                   {errors.owner && <p className="text-[10px] text-red-500 mt-0.5">{errors.owner}</p>}
                 </div>
               </div>
